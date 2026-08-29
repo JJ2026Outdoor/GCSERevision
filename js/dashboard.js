@@ -3,7 +3,7 @@ import { SUBJECTS } from "./subjects.js";
 // Subject identity colours — must match style.css and pass the dataviz
 // colour-contrast/CVD checks (validated: PASS with text labels always present
 // alongside colour, which every use here satisfies via tab labels/legends).
-const SUBJECT_COLOR = {
+export const SUBJECT_COLOR = {
   maths: "#2f5fd6",
   science: "#1f9d55",
   english: "#b3541e",
@@ -239,4 +239,4 @@ export async function renderDashboardScreen(main, { profile, preselectSubject, g
   attachTabHandlers();
   setActiveTab();
   renderBody();
-}
+}    
