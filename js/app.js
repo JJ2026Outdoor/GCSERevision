@@ -2,8 +2,9 @@ import { SUBJECTS, buildSession, hasDoneDailyToday, flattenAnswers, computeTopic
 import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles } from "./storage.js";
 import { isCorrect, correctAnswerDisplay, userAnswerDisplay } from "./marking.js";
 import { Stopwatch, formatTime } from "./timer.js";
-import { renderDashboardScreen } from "./dashboard.js";
+import { renderDashboardScreen, SUBJECT_COLOR } from "./dashboard.js";
 import { GLOSSARY } from "../data/glossary.js";
+import { ASSESSOR_PIN } from "../firebase-config.js";
 
 const WEAK_STREAK_THRESHOLD = 3;
 
@@ -106,6 +107,110 @@ function genericHint(q) {
     return "Read each option carefully and rule out any that are clearly wrong before picking one.";
   }
   return "Read the question slowly, note down what you're given, and think about exactly what it's asking you to find.";
+}
+
+// ---------- question charts (graph-reading questions) ----------
+//
+// Any question can carry an optional `chart` field — { type: "line" | "bar"
+// | "pie" | "scatter", labels: [...] (omit for scatter), datasets: [{
+// label?, data: [...] }], xLabel?, yLabel? } — and gets rendered above the
+// prompt via Chart.js (already loaded for the dashboard). A scatter
+// dataset's `data` is an array of {x, y} points instead of a plain value
+// array, matching Chart.js's own scatter format. A single-series line/bar/
+// scatter uses that subject's identity colour; a pie or multi-series chart
+// uses a small fixed colour-blind-safe categorical order (never cycled,
+// same rule as the dashboard) so a 2nd/3rd series is always the same hue,
+// not re-picked.
+const CHART_CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"];
+
+// Every Chart.js instance currently on screen, so we can destroy() them
+// before wiping main.innerHTML — otherwise old chart objects keep a
+// reference to a canvas that no longer exists in the page.
+let activeCharts = [];
+function destroyActiveCharts() {
+  activeCharts.forEach((c) => c && c.destroy());
+  activeCharts = [];
+}
+
+function buildChartConfig(subjectKey, chart) {
+  const isPie = chart.type === "pie";
+  const isScatter = chart.type === "scatter";
+  const multiSeries = chart.datasets.length > 1;
+  const dyslexia = document.body.classList.contains("dyslexia-mode");
+  Chart.defaults.font.family = dyslexia ? "'Lexend', sans-serif" : "system-ui, -apple-system, sans-serif";
+  Chart.defaults.font.size = dyslexia ? 13 : 12;
+
+  const datasets = chart.datasets.map((ds, i) => {
+    if (isPie) {
+      return {
+        label: ds.label || "",
+        data: ds.data,
+        backgroundColor: chart.labels.map((_, j) => CHART_CATEGORICAL[j % CHART_CATEGORICAL.length]),
+        borderColor: "#ffffff",
+        borderWidth: 2,
+      };
+    }
+    const color = multiSeries ? CHART_CATEGORICAL[i % CHART_CATEGORICAL.length] : SUBJECT_COLOR[subjectKey] || "#2a78d6";
+    if (isScatter) {
+      return {
+        label: ds.label || "",
+        data: ds.data,
+        showLine: false,
+        backgroundColor: color,
+        borderColor: color,
+        pointRadius: 5,
+      };
+    }
+    return {
+      label: ds.label || "",
+      data: ds.data,
+      borderColor: color,
+      backgroundColor: chart.type === "line" ? "transparent" : color,
+      borderWidth: chart.type === "line" ? 3 : 0,
+      pointRadius: chart.type === "line" ? 4 : 0,
+      pointBackgroundColor: color,
+      tension: 0.15,
+      borderRadius: chart.type === "bar" ? 4 : 0,
+    };
+  });
+
+  const xScale = {
+    title: { display: !!chart.xLabel, text: chart.xLabel || "" },
+    grid: { color: "rgba(0,0,0,0.06)" },
+  };
+  if (isScatter) xScale.type = "linear";
+
+  return {
+    type: isScatter ? "scatter" : chart.type,
+    data: isScatter ? { datasets } : { labels: chart.labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 250 },
+      plugins: {
+        legend: { display: isPie || multiSeries, labels: { boxWidth: 12 } },
+        tooltip: { enabled: true },
+      },
+      scales: isPie
+        ? {}
+        : {
+            x: xScale,
+            y: {
+              title: { display: !!chart.yLabel, text: chart.yLabel || "" },
+              grid: { color: "rgba(0,0,0,0.06)" },
+              beginAtZero: !isScatter,
+            },
+          },
+    },
+  };
+}
+
+function renderChartCanvas(canvasId, subjectKey, chart) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  const instance = new Chart(canvas.getContext("2d"), buildChartConfig(subjectKey, chart));
+  activeCharts.push(instance);
+  return instance;
 }
 
 // A lightweight overlay (not a full screen change) so it can be opened from
@@ -226,6 +331,7 @@ function buildCalendarHtml(results) {
 // ---------- HOME ----------
 
 async function renderHome() {
+  destroyActiveCharts();
   main.innerHTML = `<div class="empty-state">Loading your progress…</div>`;
   const results = await getResults({ profile: state.profile });
 
@@ -269,6 +375,7 @@ async function renderHome() {
 // ---------- SUBJECT (mixed CTA + topic picker) ----------
 
 async function renderSubject(subjectKey) {
+  destroyActiveCharts();
   const subject = SUBJECTS[subjectKey];
   state.subjectKey = subjectKey;
   main.innerHTML = `<div class="empty-state">Loading…</div>`;
@@ -367,6 +474,7 @@ function updateClock(elapsed) {
 }
 
 function renderQuestion() {
+  destroyActiveCharts();
   const session = state.session;
   const q = session.questions[state.qIndex];
   const total = session.questions.length;
@@ -374,6 +482,7 @@ function renderQuestion() {
   const savedAnswer = state.answers[q.id];
 
   const passageHtml = q.passage ? `<div class="passage-box">${escapeHtml(q.passage)}</div>` : "";
+  const chartHtml = q.chart ? `<div class="chart-wrap"><canvas id="question-chart"></canvas></div>` : "";
   const paperBadgeHtml = q.source ? `<span class="paper-badge" title="${escapeHtml(q.source.label)} — ${escapeHtml(q.source.paper)}">${escapeHtml(q.source.code)} paper</span>` : "";
   const hintText = q.hint || genericHint(q);
 
@@ -399,6 +508,7 @@ function renderQuestion() {
       ${paperBadgeHtml}
     </div>
     ${passageHtml}
+    ${chartHtml}
     <p class="question-prompt">${escapeHtml(q.prompt)}</p>
     <div class="help-row">
       <button class="btn secondary small" id="help-btn" type="button">🤔 Need help?</button>
@@ -411,6 +521,7 @@ function renderQuestion() {
     </div>
   `;
   updateClock(state.stopwatch.elapsed);
+  if (q.chart) renderChartCanvas("question-chart", state.subjectKey, q.chart);
 
   const helpBtn = document.getElementById("help-btn");
   const hintBox = document.getElementById("hint-box");
@@ -467,6 +578,7 @@ async function finishSession() {
       explanation: q.explanation,
       source: q.source || null,
       grade: q.grade || null,
+      chart: q.chart || null,
     };
   });
   const score = details.filter((d) => d.correct).length;
@@ -494,7 +606,7 @@ async function finishSession() {
     // in the assessor view, or if this question ever changes or is removed
     // from the data files down the line — without needing to re-look it up
     // from live content.
-    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade }) => ({
+    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart }) => ({
       questionId,
       topicId,
       topicTitle,
@@ -505,6 +617,7 @@ async function finishSession() {
       explanation,
       source,
       grade,
+      chart,
     })),
   };
 
@@ -541,6 +654,7 @@ const GRADE_DESCRIPTIONS = {
 };
 
 function renderResults(record, details, { previousBest, previousLast, weakTopic, leveledUp = [] }) {
+  destroyActiveCharts();
   let improvementHtml = "";
   if (previousLast !== null) {
     const delta = record.percentage - previousLast;
@@ -573,7 +687,7 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
 
   const items = details
     .map(
-      (d) => `
+      (d, i) => `
       <div class="result-item ${d.correct ? "correct" : "incorrect"}">
         <div class="tag">${d.correct ? "Correct" : "Incorrect"} · ${escapeHtml(d.topicTitle)} ${
         d.grade ? `<span class="grade-badge grade-${d.grade}" title="${escapeHtml(GRADE_DESCRIPTIONS[d.grade] || "")}">${d.grade}</span>` : ""
@@ -581,6 +695,7 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
         d.source ? `<span class="paper-badge" title="${escapeHtml(d.source.label)} — ${escapeHtml(d.source.paper)}">${escapeHtml(d.source.code)} paper</span>` : ""
       }</div>
         <div style="font-weight:600; margin-top:4px;">${escapeHtml(d.prompt)}</div>
+        ${!d.correct && d.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="result-chart-${i}"></canvas></div>` : ""}
         <div class="answers">Your answer: <strong>${escapeHtml(d.userAnswerDisplay)}</strong>${
           d.correct ? "" : `<br/>Correct answer: <strong>${escapeHtml(d.correctAnswerDisplay)}</strong>`
         }</div>
@@ -609,6 +724,10 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
     </div>
   `;
 
+  details.forEach((d, i) => {
+    if (!d.correct && d.chart) renderChartCanvas(`result-chart-${i}`, record.subject, d.chart);
+  });
+
   document.getElementById("retry-btn").addEventListener("click", () => startSession(state.subjectKey, { mode: record.mode, topicId: record.topicId }));
   document.getElementById("subject-btn").addEventListener("click", () => renderSubject(state.subjectKey));
   const weakBtn = document.getElementById("practice-weak-btn");
@@ -621,49 +740,35 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
 //
 // A read-only screen for seeing every profile's full session history,
 // question by question — not just the aggregate stats the dashboard shows.
-// It's gated behind a PIN set on first use, which is enough to stop a
-// curious kid casually opening it, but it is NOT real security: this is a
-// static app with no server or accounts, the PIN is just stored in this
-// browser's localStorage, and anyone who opens the browser's developer
-// tools can read the underlying data (or the PIN) directly regardless. In
+// It's gated behind a single shared PIN set in firebase-config.js (see
+// ASSESSOR_PIN there) — the SAME PIN on every device, not one each device
+// invents for itself on first use (that would let anyone who opens the
+// link set their own PIN and walk straight in). This is still NOT real
+// security: it's a plain-text password sitting in a public file, readable
+// by anyone who views the page source. It stops a casual visitor clicking
+// their way in; it does not stop someone who goes looking for it. In
 // cloud-sync mode all profiles already share one Firestore collection with
 // no per-profile access rules, so this view doesn't reveal anything that
 // wasn't already reachable in principle — it just makes it usable.
-const ASSESSOR_PIN_KEY = "gcse_assessor_pin_v1";
-
-function getAssessorPin() {
-  try {
-    return localStorage.getItem(ASSESSOR_PIN_KEY);
-  } catch (err) {
-    return null;
-  }
-}
 
 function openAssessorView() {
-  let pin = getAssessorPin();
-  if (!pin) {
-    const chosen = window.prompt(
-      "Set a PIN for the assessor view (any digits/letters you like).\n\nNote: this only keeps casual browsing out, not a determined technical user — this is a browser-only app with no real accounts."
+  if (!ASSESSOR_PIN || ASSESSOR_PIN === "CHANGE_ME") {
+    window.alert(
+      "The assessor view needs a PIN set before it can be used.\n\nOpen firebase-config.js, change ASSESSOR_PIN from \"CHANGE_ME\" to whatever you like, then upload it."
     );
-    if (!chosen) return;
-    try {
-      localStorage.setItem(ASSESSOR_PIN_KEY, chosen);
-    } catch (err) {
-      // Best-effort — proceed for this page view even if it can't persist.
-    }
-    pin = chosen;
-  } else {
-    const entered = window.prompt("Enter the assessor PIN:");
-    if (entered === null) return;
-    if (entered !== pin) {
-      window.alert("Incorrect PIN.");
-      return;
-    }
+    return;
+  }
+  const entered = window.prompt("Enter the assessor PIN:");
+  if (entered === null) return;
+  if (entered !== ASSESSOR_PIN) {
+    window.alert("Incorrect PIN.");
+    return;
   }
   renderAssessorProfiles();
 }
 
 async function renderAssessorProfiles() {
+  destroyActiveCharts();
   main.innerHTML = `<div class="empty-state">Loading profiles…</div>`;
   const profiles = await getAllProfiles();
 
@@ -706,6 +811,8 @@ async function renderAssessorProfiles() {
 }
 
 async function renderAssessorProfile(profileName) {
+  destroyActiveCharts();
+  const initializedSessions = new Set();
   main.innerHTML = `<div class="empty-state">Loading…</div>`;
   const results = (await getResults({ profile: profileName })).slice().reverse(); // newest first
 
@@ -725,12 +832,13 @@ async function renderAssessorProfile(profileName) {
           <div class="assessor-session-body" id="assessor-body-${i}" hidden>
             ${(r.answers || [])
               .map(
-                (a) => `
+                (a, j) => `
               <div class="result-item ${a.correct ? "correct" : "incorrect"}">
                 <div class="tag">${a.correct ? "Correct" : "Incorrect"} · ${escapeHtml(a.topicTitle || "")} ${
                   a.grade ? `<span class="grade-badge grade-${a.grade}">${a.grade}</span>` : ""
                 } ${a.source ? `<span class="paper-badge">${escapeHtml(a.source.code)} paper</span>` : ""}</div>
                 <div style="font-weight:600; margin-top:4px;">${escapeHtml(a.prompt || "(question text not recorded for this older session)")}</div>
+                ${a.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="assessor-chart-${i}-${j}"></canvas></div>` : ""}
                 <div class="answers">Answer given: <strong>${escapeHtml(a.userAnswer)}</strong>${
                   a.correct ? "" : `<br/>Correct answer: <strong>${escapeHtml(a.correctAnswer)}</strong>`
                 }</div>
@@ -757,8 +865,18 @@ async function renderAssessorProfile(profileName) {
   document.getElementById("back-assessor").addEventListener("click", renderAssessorProfiles);
   main.querySelectorAll("[data-toggle]").forEach((head) => {
     head.addEventListener("click", () => {
-      const body = document.getElementById(`assessor-body-${head.dataset.toggle}`);
+      const i = head.dataset.toggle;
+      const body = document.getElementById(`assessor-body-${i}`);
       body.hidden = !body.hidden;
+      // Charts can't size themselves correctly while their container is
+      // hidden (display:none), so they're only built the first time a
+      // session is expanded, not up-front for every session on the page.
+      if (!body.hidden && !initializedSessions.has(i)) {
+        initializedSessions.add(i);
+        (results[i].answers || []).forEach((a, j) => {
+          if (a.chart) renderChartCanvas(`assessor-chart-${i}-${j}`, results[i].subject, a.chart);
+        });
+      }
     });
   });
 }
