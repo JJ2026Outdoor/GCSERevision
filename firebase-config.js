@@ -4,7 +4,7 @@
 // — it still works, it just won't sync between your phone and your
 // daughter's phone. Nothing else in the app needs to change when you add
 // your real values here.
-export const firebaseConfig = {
+const firebaseConfig = {
   apiKey: "AIzaSy...",
   authDomain: "yourproject.firebaseapp.com",
   projectId: "yourproject",
