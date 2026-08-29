@@ -3,8 +3,11 @@
 A small, mobile-friendly revision tool for GCSE English, Maths and Science —
 5-question sessions per subject with a stopwatch (not a time limit), instant
 marking with explanations for anything wrong, a dashboard that tracks
-improvement over time, and automatic call-outs when a topic needs more
-practice.
+improvement over time, automatic call-outs when a topic needs more practice,
+questions that quietly get harder as she improves (colour-coded by grade), a
+help button and subject glossary for when a question or word doesn't make
+sense, a dyslexia-friendly display mode, a monthly streak calendar, and an
+assessor/parent view of full session history.
 
 Built around the **Welsh curriculum (WJEC)**: GCSE Mathematics and Numeracy
 (Double Award, Foundation tier), GCSE The Sciences (Double Award), and GCSE
@@ -46,10 +49,11 @@ both phones.
 
 - First visit, it asks who's revising ("Dad" or your daughter's name) — this
   keeps your results and hers separate everywhere in the app.
-- Pick a subject. The main button is **"Today's 5 (mixed topics)"** — 5
-  random questions drawn from across that whole subject. A stopwatch counts
-  up while you go (no time limit, no auto-submit) so you can see how long a
-  session actually took.
+- Pick a subject. The main button is **"Today's 5 (mixed topics)"** — one
+  question from each of that subject's 5 topics, so every topic gets touched
+  every day, each drawn at that topic's own current difficulty level (see
+  "Adaptive difficulty" below). A stopwatch counts up while you go (no time
+  limit, no auto-submit) so you can see how long a session actually took.
 - **Today's 5 is mandatory first.** Topic practice is locked (shown as a
   greyed-out "🔒 Topic practice" card) until that subject's mixed 5 is done
   for the day — this is enforced in the app logic too, not just hidden in the
@@ -63,6 +67,123 @@ both phones.
   button straight into another 5 questions on exactly that topic.
 - The dashboard (📈 button) shows sessions done, average/best score, average
   time per session, a score trend chart per subject, and accuracy by topic.
+- The home page also shows a **streak calendar** for the current month — see
+  "Streak calendar" below.
+
+## Adaptive difficulty (grades GG–CC)
+
+Questions are labelled with a difficulty grade, using the bottom five bands of
+the real grading scale Wales uses for these double-award GCSEs (English
+Language and Literature, Mathematics and Numeracy, and The Sciences): from
+easiest to hardest, **GG, FF, EE, DD, CC**. The full scale used at grading
+time actually runs all the way to A*A*, but this app only ever draws
+Foundation-tier-appropriate content, so CC is treated as the practical
+ceiling here — there's no point labelling a question "BB" if nothing in the
+bank is that hard.
+
+Each topic tracks its own level, per profile, based on your actual answer
+history for that topic:
+
+- **Get 3 in a row right** on a topic and it steps up one grade.
+- **Get one wrong** and it steps down one grade.
+- A brand-new topic starts at the easiest grade, GG, on purpose — the third
+  request was specifically "really easy in the beginning."
+
+When building a session, the app tries to draw questions at your current
+level for that topic first, and only reaches into neighbouring grades if
+there isn't enough content exactly at that level (so a session is never
+short just because one grade band is thin). In **Today's 5**, this happens
+independently per topic, since each of the 5 questions comes from a
+different topic at that topic's own level.
+
+Every question shows its grade as a small coloured badge (both while
+answering and in the results review), so you can see at a glance whether a
+mistake was on an easy or a hard one — and if a topic's level goes up after a
+session, the results screen calls it out with a "levelled up" banner.
+
+## Help button and glossary
+
+Two things for when a question — or the wording of it — is the obstacle,
+not the maths/science/English itself:
+
+- **"❓ Need help?"** on the question screen reveals a hint — a nudge on
+  *how to approach* the question, never the answer itself (e.g. "start by
+  finding a common denominator," not "the answer is 3/8"). Hand-written
+  questions and past-paper questions have a hint written specifically for
+  them; anything without one falls back to a sensible generic hint for its
+  question type.
+- **"📖 Key words"**, available both on the subject screen and from within a
+  question, opens a searchable glossary of that subject's common terminology
+  in plain English — e.g. "Product = the answer when you multiply two or
+  more numbers together." It's a lookup panel rather than clickable words
+  inside the question text itself, which kept it simpler and less visually
+  busy (a deliberate choice — inline word-by-word linking was considered and
+  dropped). The word lists live in `data/glossary.js` if you want to add
+  more terms.
+
+## Dyslexia-friendly mode
+
+The **"Aa"** button in the top-right corner toggles a dyslexia-friendly
+display, on or off per device, for anyone using that device:
+
+- Switches body text to **Lexend**, a font designed for reading proficiency
+  (falls back to the existing system font if it can't load).
+- Wider letter and word spacing, and more generous line height.
+- A softened, lower-contrast off-white/cream colour scheme instead of stark
+  white-on-black, which is easier on the eyes for a lot of dyslexic readers.
+
+The setting is remembered (in that browser) so it doesn't need re-enabling
+every visit.
+
+## Streak calendar
+
+The home page shows the current month as a grid, with each day marked as
+**done** (a session was completed that day), **missed** (a day in the past
+with no session), today, or a future day. It's a quick visual nudge —
+missed days are visible at a glance rather than buried in the dashboard.
+
+## Assessor / parent view
+
+A **"🔍 Assessor / parent view"** link on the home page opens a view of
+**every profile's** full session history — every question asked, the answer
+given, whether it was right, and the explanation, exactly as it appeared at
+the time (see "How your data is stored," below, for why that matters).
+
+The first time it's opened it asks you to set a 4-digit PIN; after that, the
+same PIN is needed to get back in. **Be clear-eyed about what this is and
+isn't:** it's a light deterrent against a curious glance, not real security.
+This is a static site with no server, no accounts and no passwords — the PIN
+lives in that browser's storage, anyone with the browser's developer tools
+open could bypass it in seconds, and (per the next section) the underlying
+data isn't access-controlled between profiles regardless. Don't rely on it
+to keep anything genuinely private.
+
+## How your data is stored
+
+There's no separate account system — "profiles" (e.g. "Dad" and your
+daughter's name) are just a name typed in once and remembered on that
+device, used to tag and filter results. Concretely:
+
+- **With no Firebase setup** (the default), everything lives in that
+  browser's `localStorage` — on that device only, all profiles mixed
+  together in one place, filtered by name when displayed. Clearing that
+  browser's site data deletes it.
+- **With Firebase wired up** (see "Cross-device sync" above), results sync
+  to one shared Firestore database for the whole app, again with every
+  profile's results in the same collection and filtered by name when
+  displayed — not split into separate per-user accounts with their own
+  logins or access rules. The Firestore rules in this README allow anyone
+  signed in (even anonymously) through your app to read and write any
+  result, which is fine for a private family tool on an unlisted link, but
+  worth knowing plainly: there's no technical barrier stopping one profile
+  from seeing another's data, and the assessor PIN above is a UI nicety, not
+  a real permissions system.
+
+If you ever wanted proper separate logins with real access control, that
+would mean adding real authentication (e.g. Firebase email/password or
+Google sign-in per person) and Firestore security rules scoped to each
+signed-in user — a bigger change than this app currently makes, and
+probably overkill for two people sharing a revision tool.
 
 ## Cross-device sync (so you both see the same dashboard)
 
@@ -193,8 +314,6 @@ faster and more accurate than the paper alone.
 
 ## A few things to know about the content
 
-## A few things to know about the content
-
 This was built from a starting question bank checked against the WJEC specs
 you provided, but it's a **starting point, not exam-board material** — treat
 it as a base to correct and expand, not a finished bank:
@@ -228,11 +347,13 @@ data/
   english.js           English hand-written question bank
   maths-generators.js  Maths-only templated questions (fresh numbers every draw)
   past-papers.js       Real past-paper questions, tagged with their source paper
+  glossary.js          Plain-English subject terminology for the "Key words" panel
 js/
-  app.js               screens, navigation, session-taking logic, weak-topic detection
+  app.js               screens, navigation, session-taking logic, weak-topic detection,
+                        help/glossary/dyslexia-mode/calendar/assessor-view UI
   storage.js            saving/loading results (local or Firebase)
   dashboard.js          the progress dashboard and charts
-  subjects.js            question pools, random session-building, daily-done check
+  subjects.js            question pools, session-building, adaptive difficulty, daily-done check
   marking.js             answer-checking logic
   timer.js               the stopwatch
 ```

@@ -1,14 +1,48 @@
-import { SUBJECTS, buildSession, hasDoneDailyToday } from "./subjects.js";
-import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults } from "./storage.js";
+import { SUBJECTS, buildSession, hasDoneDailyToday, flattenAnswers, computeTopicLevel, GRADES } from "./subjects.js";
+import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles } from "./storage.js";
 import { isCorrect, correctAnswerDisplay, userAnswerDisplay } from "./marking.js";
 import { Stopwatch, formatTime } from "./timer.js";
 import { renderDashboardScreen } from "./dashboard.js";
+import { GLOSSARY } from "../data/glossary.js";
 
 const WEAK_STREAK_THRESHOLD = 3;
 
 const main = document.getElementById("main");
 const profilePill = document.getElementById("profile-pill");
 const homeLink = document.getElementById("home-link");
+
+// ---------- dyslexia-friendly display toggle ----------
+// A per-device display preference (not tied to a profile or synced) — swaps
+// in a dyslexia-tailored font (Lexend) plus roomier spacing and a softer,
+// off-white background instead of stark white/black. See style.css's
+// .dyslexia-mode block for the actual overrides.
+const DYSLEXIA_KEY = "gcse_dyslexia_mode_v1";
+
+function applyDyslexiaMode(on) {
+  document.body.classList.toggle("dyslexia-mode", on);
+  const btn = document.getElementById("dyslexia-toggle");
+  if (btn) btn.setAttribute("aria-pressed", String(on));
+}
+
+function initDyslexiaToggle() {
+  let stored = "0";
+  try {
+    stored = localStorage.getItem(DYSLEXIA_KEY) || "0";
+  } catch (err) {
+    // localStorage can be unavailable (e.g. private browsing); just default off.
+  }
+  applyDyslexiaMode(stored === "1");
+  document.getElementById("dyslexia-toggle").addEventListener("click", () => {
+    const isOn = !document.body.classList.contains("dyslexia-mode");
+    applyDyslexiaMode(isOn);
+    try {
+      localStorage.setItem(DYSLEXIA_KEY, isOn ? "1" : "0");
+    } catch (err) {
+      // Best-effort only — the toggle still works for this page view.
+    }
+  });
+}
+initDyslexiaToggle();
 
 const state = {
   profile: null,
@@ -32,7 +66,7 @@ function updateProfilePill() {
 
 async function promptForProfile() {
   const existing = getCurrentProfile();
-  const name = window.prompt("Who's revising? (e.g. Dad, or your name)", existing || "");
+  const name = window.prompt("Who's revising?", existing || "");
   const clean = (name || "").trim();
   const finalName = clean || existing || "Guest";
   setCurrentProfile(finalName);
@@ -64,11 +98,54 @@ async function boot() {
 
 // ---------- shared helpers ----------
 
-function flattenAnswers(results) {
-  const sorted = [...results].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-  const flat = [];
-  sorted.forEach((r) => (r.answers || []).forEach((a) => flat.push(a)));
-  return flat;
+// Used when a question doesn't have its own `hint` (shouldn't normally
+// happen, but keeps the help button useful for anything added later without
+// one).
+function genericHint(q) {
+  if (q.type === "mcq") {
+    return "Read each option carefully and rule out any that are clearly wrong before picking one.";
+  }
+  return "Read the question slowly, note down what you're given, and think about exactly what it's asking you to find.";
+}
+
+// A lightweight overlay (not a full screen change) so it can be opened from
+// mid-question without losing her place or resetting the stopwatch. Shows
+// every term for the subject, filtered live by a search box.
+function showGlossaryModal(subjectKey) {
+  const terms = GLOSSARY[subjectKey] || [];
+  const existing = document.getElementById("glossary-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "glossary-overlay";
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-header">
+        <strong>📖 ${escapeHtml(SUBJECTS[subjectKey].name)} key words</strong>
+        <button class="modal-close" id="glossary-close" aria-label="Close">✕</button>
+      </div>
+      <input type="text" class="text-answer" id="glossary-search" placeholder="Search a word…" autocomplete="off" style="margin-bottom:12px;" />
+      <div class="glossary-list" id="glossary-list"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const listEl = document.getElementById("glossary-list");
+  function renderList(filter) {
+    const f = filter.trim().toLowerCase();
+    const filtered = terms.filter((t) => !f || t.term.toLowerCase().includes(f) || t.definition.toLowerCase().includes(f));
+    listEl.innerHTML = filtered.length
+      ? filtered.map((t) => `<div class="glossary-item"><strong>${escapeHtml(t.term)}</strong><div>${escapeHtml(t.definition)}</div></div>`).join("")
+      : `<div class="empty-state">No matching words.</div>`;
+  }
+  renderList("");
+
+  document.getElementById("glossary-search").addEventListener("input", (e) => renderList(e.target.value));
+  document.getElementById("glossary-close").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
 }
 
 // Trailing wrong-streak per topic: how many times in a row (most recent
@@ -89,6 +166,61 @@ function computeWeakTopics(flatAnswers) {
     if (streak > 0) streaks.push({ topicId, topicTitle: list[list.length - 1].topicTitle, streak });
   });
   return streaks.sort((a, b) => b.streak - a.streak);
+}
+
+// ---------- STREAK CALENDAR ----------
+
+// A simple current-month grid on the home screen: a tick for any day with at
+// least one completed session (any subject), a small dot for a day that was
+// missed. "Missed" only applies from her first-ever session onward — days
+// before she started aren't counted against her, and future days (including
+// today, until she's done something) are left neutral rather than flagged.
+function buildCalendarHtml(results) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
+
+  const doneDates = new Set(results.map((r) => new Date(r.timestamp).toDateString()));
+  const timestamps = results.map((r) => new Date(r.timestamp).getTime());
+  const firstSessionDay = timestamps.length ? new Date(Math.min(...timestamps)).toDateString() : null;
+  const firstSessionTime = timestamps.length ? new Date(firstSessionDay).getTime() : null;
+
+  let cells = "";
+  for (let i = 0; i < startWeekday; i++) cells += `<div class="cal-cell empty"></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month, d);
+    const dateStr = date.toDateString();
+    const isToday = dateStr === now.toDateString();
+    const isFuture = date.getTime() > new Date(now.toDateString()).getTime();
+    const done = doneDates.has(dateStr);
+    const beforeStart = firstSessionTime === null || date.getTime() < firstSessionTime;
+
+    let cls = "cal-cell";
+    let marker = "";
+    if (isFuture) {
+      cls += " future";
+    } else if (done) {
+      cls += " done";
+      marker = "✅";
+    } else if (!beforeStart) {
+      cls += " missed";
+      marker = "●";
+    }
+    if (isToday) cls += " today";
+    cells += `<div class="${cls}"><span class="cal-day">${d}</span><span class="cal-marker">${marker}</span></div>`;
+  }
+
+  const monthLabel = now.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  return `
+    <div class="card">
+      <h3 style="margin-top:0;">${escapeHtml(monthLabel)}</h3>
+      <div class="cal-weekdays">${["M", "T", "W", "T", "F", "S", "S"].map((d) => `<div>${d}</div>`).join("")}</div>
+      <div class="cal-grid">${cells}</div>
+      <div class="cal-legend"><span>✅ Practised</span><span>● Missed</span></div>
+    </div>
+  `;
 }
 
 // ---------- HOME ----------
@@ -122,12 +254,15 @@ async function renderHome() {
       </div>
       <div class="subject-grid">${subjectCards}</div>
     </div>
+    ${buildCalendarHtml(results)}
     <button class="btn secondary" id="dashboard-btn">📈 View progress dashboard</button>
+    <div class="assessor-link" id="assessor-link">🔍 Assessor / parent view</div>
   `;
 
   main.querySelectorAll("[data-subject]").forEach((btn) => {
     btn.addEventListener("click", () => renderSubject(btn.dataset.subject));
   });
+  document.getElementById("assessor-link").addEventListener("click", openAssessorView);
   document.getElementById("dashboard-btn").addEventListener("click", () => renderDashboard());
 }
 
@@ -152,10 +287,11 @@ async function renderSubject(subjectKey) {
     .map((topic) => {
       const stat = byTopic[topic.id];
       const meta = stat ? `${Math.round((stat.correct / stat.total) * 100)}% accuracy · ${stat.total} answered` : "Not tried yet";
+      const level = GRADES[computeTopicLevel(flat, topic.id)];
       return `
         <div class="test-row" data-topic="${topic.id}">
           <div>
-            <div><strong>${escapeHtml(topic.title)}</strong></div>
+            <div><strong>${escapeHtml(topic.title)}</strong> <span class="grade-badge grade-${level}" title="Current level — questions here are drawn around this grade">${level}</span></div>
             <div class="meta">${meta}</div>
           </div>
         </div>
@@ -186,11 +322,15 @@ async function renderSubject(subjectKey) {
       ${doneToday ? `<div style="text-align:center; color:var(--muted); font-size:0.8rem; margin-top:6px;">✅ Already done today — do it again anytime</div>` : ""}
     </div>
     ${topicSectionHtml}
-    <button class="btn secondary" id="dashboard-btn">📈 View progress dashboard</button>
+    <div class="nav-row">
+      <button class="btn secondary" id="dashboard-btn">📈 Dashboard</button>
+      <button class="btn secondary" id="glossary-btn">📖 Key words</button>
+    </div>
   `;
 
   document.getElementById("back-home").addEventListener("click", renderHome);
   document.getElementById("dashboard-btn").addEventListener("click", () => renderDashboard(subjectKey));
+  document.getElementById("glossary-btn").addEventListener("click", () => showGlossaryModal(subjectKey));
   document.getElementById("daily-btn").addEventListener("click", () => startSession(subjectKey, { mode: "daily" }));
   if (doneToday) {
     main.querySelectorAll("[data-topic]").forEach((row) => {
@@ -235,6 +375,7 @@ function renderQuestion() {
 
   const passageHtml = q.passage ? `<div class="passage-box">${escapeHtml(q.passage)}</div>` : "";
   const paperBadgeHtml = q.source ? `<span class="paper-badge" title="${escapeHtml(q.source.label)} — ${escapeHtml(q.source.paper)}">${escapeHtml(q.source.code)} paper</span>` : "";
+  const hintText = q.hint || genericHint(q);
 
   let answerHtml = "";
   if (q.type === "mcq") {
@@ -259,12 +400,25 @@ function renderQuestion() {
     </div>
     ${passageHtml}
     <p class="question-prompt">${escapeHtml(q.prompt)}</p>
+    <div class="help-row">
+      <button class="btn secondary small" id="help-btn" type="button">🤔 Need help?</button>
+      <button class="btn secondary small" id="glossary-btn" type="button">📖 Key words</button>
+    </div>
+    <div class="hint-box" id="hint-box" hidden>${escapeHtml(hintText)}</div>
     ${answerHtml}
     <div class="nav-row">
       <button class="btn" id="next-btn">${isLast ? "Finish" : "Next question"}</button>
     </div>
   `;
   updateClock(state.stopwatch.elapsed);
+
+  const helpBtn = document.getElementById("help-btn");
+  const hintBox = document.getElementById("hint-box");
+  helpBtn.addEventListener("click", () => {
+    hintBox.hidden = !hintBox.hidden;
+    helpBtn.textContent = hintBox.hidden ? "🤔 Need help?" : "🙈 Hide hint";
+  });
+  document.getElementById("glossary-btn").addEventListener("click", () => showGlossaryModal(state.subjectKey));
 
   if (q.type === "mcq") {
     main.querySelectorAll(".option-btn").forEach((btn) => {
@@ -312,6 +466,7 @@ async function finishSession() {
       correctAnswerDisplay: correctAnswerDisplay(q),
       explanation: q.explanation,
       source: q.source || null,
+      grade: q.grade || null,
     };
   });
   const score = details.filter((d) => d.correct).length;
@@ -334,26 +489,58 @@ async function finishSession() {
     percentage,
     durationSeconds,
     timestamp: new Date().toISOString(),
-    answers: details.map(({ questionId, topicId, topicTitle, correct, userAnswerDisplay: u, correctAnswerDisplay: c }) => ({
+    // Stores the full question text and explanation alongside each answer
+    // (not just the questionId) so a session stays fully reviewable later —
+    // in the assessor view, or if this question ever changes or is removed
+    // from the data files down the line — without needing to re-look it up
+    // from live content.
+    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade }) => ({
       questionId,
       topicId,
       topicTitle,
+      prompt,
       correct,
       userAnswer: u,
       correctAnswer: c,
+      explanation,
+      source,
+      grade,
     })),
   };
 
+  // Work out which topics got harder as a direct result of this session, by
+  // comparing each touched topic's level before vs. after — used for a small
+  // "levelled up" callout on the results screen.
+  const touchedTopicIds = [...new Set(details.map((d) => d.topicId))];
+  const flatBefore = flattenAnswers(priorResults);
+  const flatAfter = flattenAnswers([...priorResults, record]);
+  const leveledUp = touchedTopicIds
+    .map((topicId) => ({
+      topicId,
+      topicTitle: details.find((d) => d.topicId === topicId).topicTitle,
+      before: computeTopicLevel(flatBefore, topicId),
+      after: computeTopicLevel(flatAfter, topicId),
+    }))
+    .filter((t) => t.after > t.before);
+
   await saveResult(record);
 
-  const weakTopics = computeWeakTopics(flattenAnswers([...priorResults, record])).filter((w) => w.streak >= WEAK_STREAK_THRESHOLD);
+  const weakTopics = computeWeakTopics(flatAfter).filter((w) => w.streak >= WEAK_STREAK_THRESHOLD);
 
-  renderResults(record, details, { previousBest, previousLast, weakTopic: weakTopics[0] || null });
+  renderResults(record, details, { previousBest, previousLast, weakTopic: weakTopics[0] || null, leveledUp });
 }
 
 // ---------- RESULTS ----------
 
-function renderResults(record, details, { previousBest, previousLast, weakTopic }) {
+const GRADE_DESCRIPTIONS = {
+  GG: "Easiest band — basic recall",
+  FF: "Easy",
+  EE: "Medium",
+  DD: "Harder",
+  CC: "Hardest band — top of Foundation tier",
+};
+
+function renderResults(record, details, { previousBest, previousLast, weakTopic, leveledUp = [] }) {
   let improvementHtml = "";
   if (previousLast !== null) {
     const delta = record.percentage - previousLast;
@@ -363,6 +550,14 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic 
   } else {
     improvementHtml = `<div style="color:var(--muted); margin-top:6px;">First time doing this one — nice work getting started!</div>`;
   }
+
+  const levelUpHtml = leveledUp.length
+    ? `
+      <div class="card" style="border-left: 5px solid var(--good);">
+        🎉 ${leveledUp.map((t) => `<strong>${escapeHtml(t.topicTitle)}</strong> levelled up to grade ${GRADES[t.after]}`).join(", ")} — the next questions on ${leveledUp.length === 1 ? "that topic" : "those topics"} will be a little tougher.
+      </div>
+    `
+    : "";
 
   const recommendationHtml =
     weakTopic && weakTopic.topicId
@@ -381,6 +576,8 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic 
       (d) => `
       <div class="result-item ${d.correct ? "correct" : "incorrect"}">
         <div class="tag">${d.correct ? "Correct" : "Incorrect"} · ${escapeHtml(d.topicTitle)} ${
+        d.grade ? `<span class="grade-badge grade-${d.grade}" title="${escapeHtml(GRADE_DESCRIPTIONS[d.grade] || "")}">${d.grade}</span>` : ""
+      } ${
         d.source ? `<span class="paper-badge" title="${escapeHtml(d.source.label)} — ${escapeHtml(d.source.paper)}">${escapeHtml(d.source.code)} paper</span>` : ""
       }</div>
         <div style="font-weight:600; margin-top:4px;">${escapeHtml(d.prompt)}</div>
@@ -400,6 +597,7 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic 
       <div style="color:var(--muted); margin-top:4px;">⏱ Completed in ${formatTime(record.durationSeconds)}</div>
       ${improvementHtml}
     </div>
+    ${levelUpHtml}
     ${recommendationHtml}
     <div class="card">
       <h3 style="margin-top:0;">Review your answers</h3>
@@ -417,6 +615,152 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic 
   if (weakBtn) {
     weakBtn.addEventListener("click", () => startSession(state.subjectKey, { mode: "topic", topicId: weakTopic.topicId }));
   }
+}
+
+// ---------- ASSESSOR / PARENT VIEW ----------
+//
+// A read-only screen for seeing every profile's full session history,
+// question by question — not just the aggregate stats the dashboard shows.
+// It's gated behind a PIN set on first use, which is enough to stop a
+// curious kid casually opening it, but it is NOT real security: this is a
+// static app with no server or accounts, the PIN is just stored in this
+// browser's localStorage, and anyone who opens the browser's developer
+// tools can read the underlying data (or the PIN) directly regardless. In
+// cloud-sync mode all profiles already share one Firestore collection with
+// no per-profile access rules, so this view doesn't reveal anything that
+// wasn't already reachable in principle — it just makes it usable.
+const ASSESSOR_PIN_KEY = "gcse_assessor_pin_v1";
+
+function getAssessorPin() {
+  try {
+    return localStorage.getItem(ASSESSOR_PIN_KEY);
+  } catch (err) {
+    return null;
+  }
+}
+
+function openAssessorView() {
+  let pin = getAssessorPin();
+  if (!pin) {
+    const chosen = window.prompt(
+      "Set a PIN for the assessor view (any digits/letters you like).\n\nNote: this only keeps casual browsing out, not a determined technical user — this is a browser-only app with no real accounts."
+    );
+    if (!chosen) return;
+    try {
+      localStorage.setItem(ASSESSOR_PIN_KEY, chosen);
+    } catch (err) {
+      // Best-effort — proceed for this page view even if it can't persist.
+    }
+    pin = chosen;
+  } else {
+    const entered = window.prompt("Enter the assessor PIN:");
+    if (entered === null) return;
+    if (entered !== pin) {
+      window.alert("Incorrect PIN.");
+      return;
+    }
+  }
+  renderAssessorProfiles();
+}
+
+async function renderAssessorProfiles() {
+  main.innerHTML = `<div class="empty-state">Loading profiles…</div>`;
+  const profiles = await getAllProfiles();
+
+  if (!profiles.length) {
+    main.innerHTML = `
+      <span class="back-link" id="back-home">&larr; Back</span>
+      <div class="empty-state">No sessions recorded yet for any profile.</div>
+    `;
+    document.getElementById("back-home").addEventListener("click", renderHome);
+    return;
+  }
+
+  const rows = await Promise.all(
+    profiles.map(async (name) => {
+      const results = await getResults({ profile: name });
+      const avg = results.length ? Math.round(results.reduce((s, r) => s + r.percentage, 0) / results.length) : null;
+      return `
+        <div class="test-row" data-profile="${escapeHtml(name)}">
+          <div>
+            <div><strong>${escapeHtml(name)}</strong></div>
+            <div class="meta">${results.length} session${results.length === 1 ? "" : "s"}${avg !== null ? ` · avg ${avg}%` : ""}</div>
+          </div>
+        </div>
+      `;
+    })
+  );
+
+  main.innerHTML = `
+    <span class="back-link" id="back-home">&larr; Back</span>
+    <div class="card">
+      <h2 style="margin-top:0;">Assessor view</h2>
+      <div style="color:var(--muted); font-size:0.88rem; margin-top:-8px;">Pick a profile to see its full session-by-session history.</div>
+      <div class="test-list" style="margin-top:14px;">${rows.join("")}</div>
+    </div>
+  `;
+  document.getElementById("back-home").addEventListener("click", renderHome);
+  main.querySelectorAll("[data-profile]").forEach((row) => {
+    row.addEventListener("click", () => renderAssessorProfile(row.dataset.profile));
+  });
+}
+
+async function renderAssessorProfile(profileName) {
+  main.innerHTML = `<div class="empty-state">Loading…</div>`;
+  const results = (await getResults({ profile: profileName })).slice().reverse(); // newest first
+
+  const sessionRows = results
+    .map((r, i) => {
+      const date = new Date(r.timestamp).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      const subjectName = SUBJECTS[r.subject] ? SUBJECTS[r.subject].name : r.subject;
+      return `
+        <div class="card assessor-session">
+          <div class="assessor-session-head" data-toggle="${i}">
+            <div>
+              <strong>${escapeHtml(subjectName)}</strong> — ${escapeHtml(r.sessionTitle)}
+              <div class="meta">${escapeHtml(date)} · ${formatTime(r.durationSeconds || 0)}</div>
+            </div>
+            <div class="pct" style="font-weight:800;">${r.percentage}%</div>
+          </div>
+          <div class="assessor-session-body" id="assessor-body-${i}" hidden>
+            ${(r.answers || [])
+              .map(
+                (a) => `
+              <div class="result-item ${a.correct ? "correct" : "incorrect"}">
+                <div class="tag">${a.correct ? "Correct" : "Incorrect"} · ${escapeHtml(a.topicTitle || "")} ${
+                  a.grade ? `<span class="grade-badge grade-${a.grade}">${a.grade}</span>` : ""
+                } ${a.source ? `<span class="paper-badge">${escapeHtml(a.source.code)} paper</span>` : ""}</div>
+                <div style="font-weight:600; margin-top:4px;">${escapeHtml(a.prompt || "(question text not recorded for this older session)")}</div>
+                <div class="answers">Answer given: <strong>${escapeHtml(a.userAnswer)}</strong>${
+                  a.correct ? "" : `<br/>Correct answer: <strong>${escapeHtml(a.correctAnswer)}</strong>`
+                }</div>
+                ${a.explanation ? `<div class="explanation">${escapeHtml(a.explanation)}</div>` : ""}
+              </div>
+            `
+              )
+              .join("")}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  main.innerHTML = `
+    <span class="back-link" id="back-assessor">&larr; All profiles</span>
+    <div class="card">
+      <h2 style="margin-top:0;">${escapeHtml(profileName)}</h2>
+      <div style="color:var(--muted); font-size:0.88rem; margin-top:-8px;">${results.length} session${results.length === 1 ? "" : "s"} recorded — tap one to see every question and answer.</div>
+    </div>
+    ${sessionRows || `<div class="empty-state">No sessions yet.</div>`}
+  `;
+
+  document.getElementById("back-assessor").addEventListener("click", renderAssessorProfiles);
+  main.querySelectorAll("[data-toggle]").forEach((head) => {
+    head.addEventListener("click", () => {
+      const body = document.getElementById(`assessor-body-${head.dataset.toggle}`);
+      body.hidden = !body.hidden;
+    });
+  });
 }
 
 // ---------- DASHBOARD ----------

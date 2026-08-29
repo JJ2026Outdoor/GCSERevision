@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <title>GCSE Revision</title>
   <meta name="description" content="5-minute GCSE revision tests for English, Maths and Science, with a progress dashboard." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
 </head>
@@ -12,7 +15,10 @@
   <div id="app">
     <header class="top-bar">
       <h1 id="home-link">📚 GCSE Revision</h1>
-      <div class="profile-pill" id="profile-pill">Choose profile</div>
+      <div class="header-right">
+        <button class="a11y-toggle" id="dyslexia-toggle" type="button" title="Dyslexia-friendly display" aria-pressed="false">Aa</button>
+        <div class="profile-pill" id="profile-pill">Choose profile</div>
+      </div>
     </header>
     <main id="main">
       <div class="empty-state">Loading…</div>
