@@ -65,11 +65,61 @@ function updateProfilePill() {
   profilePill.innerHTML = `${escapeHtml(state.profile || "Choose profile")} ${badge}`;
 }
 
+// In-page modal for entering a profile name, replacing window.prompt().
+// Native prompt()/confirm()/alert() dialogs are unreliable across browsers —
+// notably, Safari on iOS can silently suppress all future prompt() calls
+// after a user (even accidentally) ticks "Prevent this page from creating
+// additional dialogs", after which prompt() returns null with no dialog
+// shown at all, and there is no way for the page to detect or undo that.
+// A same-page modal (same overlay pattern as the glossary/calculator) has
+// no such failure mode and is also more accessible — it's keyboard- and
+// screen-reader-navigable, unlike the native prompt, which some
+// accessibility tools handle inconsistently.
+function showProfileNameModal(existingName) {
+  return new Promise((resolve) => {
+    const existingOverlay = document.getElementById("profile-name-overlay");
+    if (existingOverlay) existingOverlay.remove();
+
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.id = "profile-name-overlay";
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-header">
+          <strong>Who's revising?</strong>
+        </div>
+        <label for="profile-name-input" style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:8px;">Enter a name</label>
+        <input type="text" class="text-answer" id="profile-name-input" autocomplete="off" placeholder="e.g. Alex" value="${existingName ? escapeHtml(existingName) : ""}" />
+        <button class="btn block" id="profile-name-save">Save</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const input = document.getElementById("profile-name-input");
+    input.focus();
+    input.select();
+
+    function submit() {
+      const clean = input.value.trim();
+      overlay.remove();
+      resolve(clean || existingName || "Guest");
+    }
+
+    document.getElementById("profile-name-save").addEventListener("click", submit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+    // Deliberately no click-outside-to-close and no close (✕) button here,
+    // unlike the glossary/calculator modals — a profile name is required to
+    // use the app at all (mirrors the old prompt(), which couldn't be
+    // dismissed without a value either), so this modal always resolves via
+    // Save or Enter.
+  });
+}
+
 async function promptForProfile() {
   const existing = getCurrentProfile();
-  const name = window.prompt("Who's revising?", existing || "");
-  const clean = (name || "").trim();
-  const finalName = clean || existing || "Guest";
+  const finalName = await showProfileNameModal(existing);
   setCurrentProfile(finalName);
   state.profile = finalName;
   updateProfilePill();
