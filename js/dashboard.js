@@ -9,6 +9,84 @@ export const SUBJECT_COLOR = {
   english: "#b3541e",
 };
 
+const SUBJECT_MILESTONES = [25, 100, 250, 500];
+const PERFECT_DAY_TIERS = [
+  { name: "Bronze", threshold: 1, css: "bronze" },
+  { name: "Silver", threshold: 10, css: "silver" },
+  { name: "Gold", threshold: 25, css: "gold" },
+  { name: "Platinum", threshold: 50, css: "platinum" },
+];
+
+function trophyHTML({ locked, colorVar, tierClass, label, title }) {
+  const style = colorVar ? `style="color:${colorVar}"` : "";
+  const cls = ["trophy", locked ? "locked" : "", tierClass || ""].filter(Boolean).join(" ");
+  return `
+    <div class="${cls}" ${style} title="${title}">
+      <svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
+        <path d="M16 10H6v4c0 8 5 13 10 14" fill="none" stroke="currentColor" stroke-width="3"/>
+        <path d="M48 10h10v4c0 8-5 13-10 14" fill="none" stroke="currentColor" stroke-width="3"/>
+        <path d="M16 8h32v6c0 10-6 16-14 18v8h8a2 2 0 010 4H22a2 2 0 010-4h8v-8C22 30 16 24 16 14V8z" fill="currentColor"/>
+        <rect x="24" y="46" width="16" height="4" rx="1" fill="currentColor"/>
+        <rect x="20" y="50" width="24" height="4" rx="1" fill="currentColor"/>
+      </svg>
+      <div class="trophy-num">${label}</div>
+    </div>
+  `;
+}
+
+function renderTrophyShelf(allResults) {
+  function attempted(subjectKey) {
+    return allResults
+      .filter((r) => r.subject === subjectKey)
+      .reduce((sum, r) => sum + (r.answers ? r.answers.length : 0), 0);
+  }
+
+  // "Perfect 5-a-day" is deliberately scoped to mode === "daily" only —
+  // a 100% on topic practice doesn't count.
+  const perfectCount = allResults.filter((r) => r.mode === "daily" && r.percentage === 100).length;
+
+  const subjectTracks = Object.values(SUBJECTS)
+    .map((subject) => {
+      const count = attempted(subject.key);
+      const trophies = SUBJECT_MILESTONES.map((m) => {
+        const unlocked = count >= m;
+        return trophyHTML({
+          locked: !unlocked,
+          colorVar: SUBJECT_COLOR[subject.key],
+          label: m,
+          title: unlocked
+            ? `${subject.name}: ${m} questions attempted — unlocked!`
+            : `${subject.name}: ${count}/${m} questions attempted`,
+        });
+      }).join("");
+      return `<div class="trophy-track"><div class="trophy-track-label">${subject.name}</div><div class="trophy-row">${trophies}</div></div>`;
+    })
+    .join("");
+
+  const globalTrophies = PERFECT_DAY_TIERS.map((tier) => {
+    const unlocked = perfectCount >= tier.threshold;
+    return trophyHTML({
+      locked: !unlocked,
+      tierClass: tier.css,
+      label: tier.threshold,
+      title: unlocked
+        ? `${tier.name}: ${tier.threshold}+ perfect 5-a-days — unlocked!`
+        : `${tier.name}: ${perfectCount}/${tier.threshold} perfect 5-a-days`,
+    });
+  }).join("");
+
+  return `
+    <div class="card trophy-shelf">
+      <h3 style="margin-top:0;">🏆 Milestones</h3>
+      ${subjectTracks}
+      <div class="trophy-track">
+        <div class="trophy-track-label">Perfect 5-a-days (${perfectCount} so far)</div>
+        <div class="trophy-row">${globalTrophies}</div>
+      </div>
+    </div>
+  `;
+}
+
 let trendChart = null;
 let topicChart = null;
 
@@ -39,6 +117,9 @@ export async function renderDashboardScreen(main, { profile, preselectSubject, g
     <span class="back-link" id="dash-back">&larr; Home</span>
     <div class="card">
       <h2 style="margin-top:0;">Progress dashboard — ${escapeHtml(profile)}</h2>
+    </div>
+    ${renderTrophyShelf(allResults)}
+    <div class="card">
       <div class="dash-tabs" id="dash-tabs">
         <button class="dash-tab" data-subject="all">All subjects</button>
         ${Object.values(SUBJECTS)

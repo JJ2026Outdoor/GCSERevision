@@ -593,3 +593,59 @@ body.dyslexia-mode .test-row .meta {
   z-index: 20;
   box-shadow: var(--shadow);
 }
+
+.calculator-card { max-width: 320px; }
+.calc-display {
+  text-align: right;
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-bottom: 12px;
+  background: var(--bg);
+}
+.calc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.calc-key {
+  padding: 16px 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  cursor: pointer;
+  font-family: inherit;
+}
+.calc-key.calc-op { background: var(--primary); color: #fff; border-color: var(--primary); }
+.calc-key.calc-clear { grid-column: span 4; background: var(--bg); color: var(--bad); }
+
+.trophy-track { margin-bottom: 14px; }
+.trophy-track:last-child { margin-bottom: 0; }
+.trophy-track-label { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.trophy-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.trophy { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.trophy.locked { color: #c9ccd4; opacity: 0.55; }
+.trophy-num { font-size: 0.72rem; font-weight: 800; color: inherit; }
+
+.trophy.bronze:not(.locked) { color: #b5651d; }
+.trophy.silver:not(.locked) { color: #9ea6ad; }
+.trophy.gold:not(.locked) { color: #d4af17; }
+.trophy.platinum:not(.locked) {
+  color: #7fd6e0;
+  position: relative;
+}
+.trophy.platinum:not(.locked) svg {
+  filter: drop-shadow(0 0 4px rgba(180, 230, 255, 0.8));
+}
+.trophy.platinum:not(.locked)::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  background: linear-gradient(120deg, transparent 20%, rgba(255,255,255,0.9) 50%, transparent 80%);
+  background-size: 200% 100%;
+  animation: shimmer 2.2s linear infinite;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  border-radius: 50%;
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}

@@ -253,6 +253,71 @@ function showGlossaryModal(subjectKey) {
   });
 }
 
+// Basic four-function calculator, maths only. Same overlay pattern as the
+// glossary modal — a lightweight non-blocking popup, not a screen change.
+function showCalculatorModal() {
+  const existing = document.getElementById("calculator-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "calculator-overlay";
+  overlay.innerHTML = `
+    <div class="modal-card calculator-card">
+      <div class="modal-header">
+        <strong>🧮 Calculator</strong>
+        <button class="modal-close" id="calc-close" aria-label="Close">✕</button>
+      </div>
+      <input type="text" class="text-answer calc-display" id="calc-display" readonly value="0" />
+      <div class="calc-grid">
+        ${["7", "8", "9", "÷", "4", "5", "6", "×", "1", "2", "3", "−", "0", ".", "=", "+"]
+          .map((k) => `<button class="calc-key ${"÷×−+=".includes(k) ? "calc-op" : ""}" data-key="${k}">${k}</button>`)
+          .join("")}
+        <button class="calc-key calc-clear" data-key="C">C</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  let expr = "";
+  const display = document.getElementById("calc-display");
+
+  function render() {
+    display.value = expr === "" ? "0" : expr;
+  }
+
+  function toEvalString(s) {
+    return s.replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-");
+  }
+
+  overlay.querySelectorAll(".calc-key").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.key;
+      if (key === "C") {
+        expr = "";
+      } else if (key === "=") {
+        try {
+          // Only digits, ., and the four operators reach here — expr is
+          // built exclusively from this keypad, never free text input.
+          const result = Function(`"use strict"; return (${toEvalString(expr)})`)();
+          expr = Number.isFinite(result) ? String(Math.round(result * 1e10) / 1e10) : "Error";
+        } catch {
+          expr = "Error";
+        }
+      } else {
+        if (expr === "Error") expr = "";
+        expr += key;
+      }
+      render();
+    });
+  });
+
+  document.getElementById("calc-close").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+}
+
 // Trailing wrong-streak per topic: how many times in a row (most recent
 // first) a question from that topic was answered incorrectly.
 function computeWeakTopics(flatAnswers) {
@@ -513,6 +578,7 @@ function renderQuestion() {
     <div class="help-row">
       <button class="btn secondary small" id="help-btn" type="button">🤔 Need help?</button>
       <button class="btn secondary small" id="glossary-btn" type="button">📖 Key words</button>
+      ${state.subjectKey === "maths" ? `<button class="btn secondary small" id="calc-btn" type="button">🧮 Calculator</button>` : ""}
     </div>
     <div class="hint-box" id="hint-box" hidden>${escapeHtml(hintText)}</div>
     ${answerHtml}
@@ -530,6 +596,8 @@ function renderQuestion() {
     helpBtn.textContent = hintBox.hidden ? "🤔 Need help?" : "🙈 Hide hint";
   });
   document.getElementById("glossary-btn").addEventListener("click", () => showGlossaryModal(state.subjectKey));
+  const calcBtn = document.getElementById("calc-btn");
+  if (calcBtn) calcBtn.addEventListener("click", showCalculatorModal);
 
   if (q.type === "mcq") {
     main.querySelectorAll(".option-btn").forEach((btn) => {
