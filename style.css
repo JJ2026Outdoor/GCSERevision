@@ -593,6 +593,133 @@ input.text-answer:focus { outline: none; border-color: var(--primary); }
   text-align: center;
 }
 
+/* Click-a-side question type — tap a labelled side/segment of a rendered
+   shape (SVG). Each segment is drawn twice: a thin visible line, and an
+   invisible wide-stroke line on top that actually catches the click/tap. */
+.click-side-wrap {
+  margin: 8px 0 20px;
+  text-align: center;
+}
+
+.click-side-svg {
+  width: 100%;
+  max-width: 340px;
+  height: auto;
+  margin: 0 auto;
+  touch-action: manipulation;
+}
+
+.click-side-bg-circle {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.click-side-line {
+  stroke: var(--text);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  fill: none;
+  transition: stroke 0.15s ease, stroke-width 0.15s ease;
+}
+
+.click-side-line.selected {
+  stroke: var(--primary);
+  stroke-width: 5;
+}
+
+.click-side-hit {
+  stroke: transparent;
+  stroke-width: 18;
+  fill: none;
+  cursor: pointer;
+}
+
+.click-side-line.hovered {
+  stroke: var(--primary-dark);
+}
+
+.click-side-hit:focus {
+  outline: none;
+}
+
+.click-side-point-label {
+  font-size: 11px;
+  fill: var(--muted);
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.click-side-status {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Drag-a-radius question type — drag a radius around a circle; the app
+   classifies the resulting angle (acute/right/obtuse/straight/reflex) live
+   against the fixed grey reference radius as the learner drags. */
+.drag-radius-wrap {
+  margin: 8px 0 20px;
+  text-align: center;
+}
+
+.drag-radius-label {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: 14px;
+}
+
+.drag-radius-svg {
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+  margin: 0 auto;
+  touch-action: none;
+}
+
+.drag-radius-circle {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.drag-radius-fixed {
+  stroke: var(--muted);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.drag-radius-moving {
+  stroke: var(--primary);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.drag-radius-arc {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2;
+  opacity: 0.4;
+}
+
+.drag-radius-handle {
+  fill: var(--card-bg);
+  stroke: var(--primary);
+  stroke-width: 3;
+  cursor: grab;
+  touch-action: none;
+}
+
+.drag-radius-handle:active { cursor: grabbing; }
+
+.drag-radius-handle:focus {
+  outline: 3px solid #cddbfb;
+  outline-offset: 2px;
+}
+
 .nav-row {
   display: flex;
   gap: 10px;

@@ -1,6 +1,6 @@
 import { SUBJECTS, buildSession, hasDoneDailyToday, flattenAnswers, computeTopicLevel, GRADES } from "./subjects.js";
 import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles, getProfileSettings, setProfileSettings } from "./storage.js";
-import { isCorrect, correctAnswerDisplay, userAnswerDisplay, optionLabel } from "./marking.js";
+import { isCorrect, correctAnswerDisplay, userAnswerDisplay, optionLabel, classifyAngleDeg } from "./marking.js";
 import { Stopwatch, formatTime } from "./timer.js";
 import { renderDashboardScreen, SUBJECT_COLOR } from "./dashboard.js";
 import { GLOSSARY } from "../data/glossary.js";
@@ -538,6 +538,229 @@ function setupGridShade(q, savedAnswer) {
   });
 }
 
+// ---------- click-a-side questions (tap a labelled side/segment of a shape) ----------
+//
+// A question can carry `type: "click-a-side"` with top-level fields:
+// `points` (array of `{ id, x, y }` vertex positions in the SVG's own
+// coordinate space), `segments` (array of `{ id, from, to, label? }`, each
+// naming two point ids to draw a line between), `correctSegmentIds` (array —
+// usually one id, but e.g. "click either parallel side" needs two),
+// optional `circle` (`{ cx, cy, r }`, a decorative non-interactive circle —
+// for radius/diameter/chord questions), optional `viewBox` (defaults to
+// "0 0 240 200"), and optional `showLabels` (defaults true — draws each
+// point's id as a small letter next to its vertex). Pure vector geometry, no
+// image assets: every segment is drawn twice — a thin visible line, and an
+// invisible wide-stroke line on top that actually receives the click/tap
+// (a thin line is a poor-quality target on a touchscreen).
+function renderClickSideHtml(q, savedAnswer) {
+  const viewBox = q.viewBox || "0 0 240 200";
+  const pt = (id) => q.points.find((p) => p.id === id);
+  const circleHtml = q.circle ? `<circle cx="${q.circle.cx}" cy="${q.circle.cy}" r="${q.circle.r}" class="click-side-bg-circle" />` : "";
+  const lineHtml = q.segments
+    .map((seg) => {
+      const from = pt(seg.from);
+      const to = pt(seg.to);
+      const selected = savedAnswer === seg.id ? "selected" : "";
+      return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" class="click-side-line ${selected}" data-line-for="${seg.id}" />`;
+    })
+    .join("");
+  const hitHtml = q.segments
+    .map((seg) => {
+      const from = pt(seg.from);
+      const to = pt(seg.to);
+      return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" class="click-side-hit" data-segment-id="${seg.id}" pointer-events="all" tabindex="0" role="button" aria-label="Side ${escapeHtml(seg.label || seg.id)}" />`;
+    })
+    .join("");
+  const labelsHtml =
+    q.showLabels === false
+      ? ""
+      : q.points
+          .map((p) => `<text x="${p.x + (p.labelDx ?? 0)}" y="${p.y + (p.labelDy ?? -8)}" class="click-side-point-label">${escapeHtml(p.id)}</text>`)
+          .join("");
+  const savedSeg = savedAnswer ? q.segments.find((s) => s.id === savedAnswer) : null;
+  return `
+    <div class="click-side-wrap">
+      <svg viewBox="${viewBox}" class="click-side-svg" id="click-side-svg">
+        ${circleHtml}
+        ${lineHtml}
+        ${hitHtml}
+        ${labelsHtml}
+      </svg>
+      <div class="click-side-status" id="click-side-status">${savedSeg ? `Selected: ${escapeHtml(savedSeg.label || savedSeg.id)}` : "Tap a side to select it"}</div>
+    </div>
+  `;
+}
+
+function setupClickSide(q) {
+  const svg = document.getElementById("click-side-svg");
+  const status = document.getElementById("click-side-status");
+
+  function select(segmentId) {
+    state.answers[q.id] = segmentId;
+    svg.querySelectorAll(".click-side-line").forEach((line) => {
+      line.classList.toggle("selected", line.dataset.lineFor === segmentId);
+    });
+    const seg = q.segments.find((s) => s.id === segmentId);
+    status.textContent = `Selected: ${seg ? seg.label || seg.id : segmentId}`;
+  }
+
+  svg.querySelectorAll(".click-side-hit").forEach((hit) => {
+    const line = svg.querySelector(`.click-side-line[data-line-for="${hit.dataset.segmentId}"]`);
+    hit.addEventListener("click", () => select(hit.dataset.segmentId));
+    hit.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        select(hit.dataset.segmentId);
+      }
+    });
+    if (line) {
+      hit.addEventListener("pointerenter", () => line.classList.add("hovered"));
+      hit.addEventListener("pointerleave", () => line.classList.remove("hovered"));
+      hit.addEventListener("focus", () => line.classList.add("hovered"));
+      hit.addEventListener("blur", () => line.classList.remove("hovered"));
+    }
+  });
+}
+
+// ---------- drag-a-radius questions (drag a radius around a circle, angle classified live) ----------
+//
+// A question can carry `type: "drag-a-radius"` with top-level fields:
+// `circle` (`{ cx, cy, r }`, defaults to `{ cx: 100, cy: 100, r: 80 }` on a
+// "0 0 200 200" viewBox), `fixedAngleDeg` (the static reference radius,
+// default 0 = pointing right/east), `correctClass` (one of "acute", "right",
+// "obtuse", "straight", "reflex" — what the learner must drag the moving
+// radius to form with the fixed one), and optional `classTolerance` (degrees
+// either side of exactly 90°/180° that still count as "right"/"straight" —
+// see classifyAngleDeg() in marking.js, the single source of truth both this
+// live label and the actual marking use). Angles are measured in degrees,
+// clockwise from the fixed radius, wrapped into [0, 360) — pure vector
+// geometry (atan2 on the drag position), no image assets.
+function pointFromClientToSvg(svg, clientX, clientY) {
+  const pt = svg.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return { x: clientX, y: clientY };
+  const loc = pt.matrixTransform(ctm.inverse());
+  return { x: loc.x, y: loc.y };
+}
+
+function angleFromCentreDeg(cx, cy, x, y) {
+  let deg = (Math.atan2(y - cy, x - cx) * 180) / Math.PI;
+  if (deg < 0) deg += 360;
+  return deg;
+}
+
+function describeAngleLive(deg, tol) {
+  const label = { acute: "Acute angle", right: "Right angle", obtuse: "Obtuse angle", straight: "Straight line", reflex: "Reflex angle" }[classifyAngleDeg(deg, tol)];
+  return `${label} (${Math.round(deg)}°)`;
+}
+
+function arcPathD(cx, cy, arcR, fromDeg, toDeg) {
+  const fromRad = (fromDeg * Math.PI) / 180;
+  const toRad = (toDeg * Math.PI) / 180;
+  const sx = cx + arcR * Math.cos(fromRad);
+  const sy = cy + arcR * Math.sin(fromRad);
+  const ex = cx + arcR * Math.cos(toRad);
+  const ey = cy + arcR * Math.sin(toRad);
+  const delta = ((toDeg - fromDeg) % 360 + 360) % 360;
+  const largeArc = delta > 180 ? 1 : 0;
+  return `M ${sx} ${sy} A ${arcR} ${arcR} 0 ${largeArc} 1 ${ex} ${ey}`;
+}
+
+function renderDragRadiusHtml(q, savedAnswer) {
+  const c = q.circle || { cx: 100, cy: 100, r: 80 };
+  const viewBox = q.viewBox || "0 0 200 200";
+  const fixedDeg = q.fixedAngleDeg ?? 0;
+  const fixedRad = (fixedDeg * Math.PI) / 180;
+  const fx = c.cx + c.r * Math.cos(fixedRad);
+  const fy = c.cy + c.r * Math.sin(fixedRad);
+  const currentDeg = savedAnswer !== undefined ? savedAnswer : (fixedDeg + 90) % 360;
+  const currentRad = (currentDeg * Math.PI) / 180;
+  const mx = c.cx + c.r * Math.cos(currentRad);
+  const my = c.cy + c.r * Math.sin(currentRad);
+  const arcR = Math.max(18, c.r * 0.3);
+  return `
+    <div class="drag-radius-wrap">
+      <div class="drag-radius-label" id="drag-radius-label">${savedAnswer !== undefined ? escapeHtml(describeAngleLive(currentDeg, q.classTolerance)) : "Drag the blue handle around the circle"}</div>
+      <svg viewBox="${viewBox}" class="drag-radius-svg" id="drag-radius-svg" touch-action="none">
+        <circle cx="${c.cx}" cy="${c.cy}" r="${c.r}" class="drag-radius-circle" />
+        <path d="${arcPathD(c.cx, c.cy, arcR, fixedDeg, currentDeg)}" class="drag-radius-arc" id="drag-radius-arc" />
+        <line x1="${c.cx}" y1="${c.cy}" x2="${fx}" y2="${fy}" class="drag-radius-fixed" />
+        <line x1="${c.cx}" y1="${c.cy}" x2="${mx}" y2="${my}" class="drag-radius-moving" id="drag-radius-moving-line" />
+        <circle cx="${mx}" cy="${my}" r="9" class="drag-radius-handle" id="drag-radius-handle" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="360" aria-valuenow="${Math.round(currentDeg)}" aria-label="Drag to change the angle, currently ${Math.round(currentDeg)} degrees" />
+      </svg>
+    </div>
+  `;
+}
+
+function setupDragRadius(q, savedAnswer) {
+  const c = q.circle || { cx: 100, cy: 100, r: 80 };
+  const fixedDeg = q.fixedAngleDeg ?? 0;
+  const arcR = Math.max(18, c.r * 0.3);
+  const svg = document.getElementById("drag-radius-svg");
+  const handle = document.getElementById("drag-radius-handle");
+  const movingLine = document.getElementById("drag-radius-moving-line");
+  const arc = document.getElementById("drag-radius-arc");
+  const label = document.getElementById("drag-radius-label");
+  let deg = savedAnswer !== undefined ? savedAnswer : (fixedDeg + 90) % 360;
+
+  function paint(answered) {
+    const rad = (deg * Math.PI) / 180;
+    const mx = c.cx + c.r * Math.cos(rad);
+    const my = c.cy + c.r * Math.sin(rad);
+    handle.setAttribute("cx", mx);
+    handle.setAttribute("cy", my);
+    handle.setAttribute("aria-valuenow", String(Math.round(deg)));
+    handle.setAttribute("aria-label", `Drag to change the angle, currently ${Math.round(deg)} degrees`);
+    movingLine.setAttribute("x2", mx);
+    movingLine.setAttribute("y2", my);
+    arc.setAttribute("d", arcPathD(c.cx, c.cy, arcR, fixedDeg, deg));
+    label.textContent = answered ? describeAngleLive(deg, q.classTolerance) : "Drag the blue handle around the circle";
+  }
+
+  function commit(newDeg) {
+    deg = newDeg;
+    state.answers[q.id] = deg;
+    paint(true);
+  }
+
+  paint(savedAnswer !== undefined);
+
+  let dragging = false;
+  function degFromPointer(e) {
+    const loc = pointFromClientToSvg(svg, e.clientX, e.clientY);
+    return angleFromCentreDeg(c.cx, c.cy, loc.x, loc.y);
+  }
+  handle.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    handle.setPointerCapture(e.pointerId);
+    commit(degFromPointer(e));
+    e.preventDefault();
+  });
+  handle.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    commit(degFromPointer(e));
+  });
+  const endDrag = (e) => {
+    dragging = false;
+    if (handle.hasPointerCapture && handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+  };
+  handle.addEventListener("pointerup", endDrag);
+  handle.addEventListener("pointercancel", endDrag);
+
+  handle.addEventListener("keydown", (e) => {
+    const step = 5;
+    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      commit(((deg - step) % 360 + 360) % 360);
+      e.preventDefault();
+    } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      commit((deg + step) % 360);
+      e.preventDefault();
+    }
+  });
+}
+
 // A lightweight overlay (not a full screen change) so it can be opened from
 // mid-question without losing her place or resetting the stopwatch. Shows
 // every term for the subject, filtered live by a search box.
@@ -915,6 +1138,10 @@ function renderQuestion() {
     answerHtml = renderNumberLineHtml(q.numberline, savedAnswer);
   } else if (q.type === "grid-shade") {
     answerHtml = renderGridShadeHtml(q, savedAnswer);
+  } else if (q.type === "click-a-side") {
+    answerHtml = renderClickSideHtml(q, savedAnswer);
+  } else if (q.type === "drag-a-radius") {
+    answerHtml = renderDragRadiusHtml(q, savedAnswer);
   } else {
     answerHtml = `<input type="text" class="text-answer" id="short-answer" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your answer" value="${savedAnswer !== undefined ? escapeHtml(savedAnswer) : ""}" />`;
   }
@@ -950,6 +1177,8 @@ function renderQuestion() {
   if (q.chart) renderChartCanvas("question-chart", state.subjectKey, q.chart);
   if (q.type === "numberline") setupNumberLine(q, savedAnswer);
   if (q.type === "grid-shade") setupGridShade(q, savedAnswer);
+  if (q.type === "click-a-side") setupClickSide(q);
+  if (q.type === "drag-a-radius") setupDragRadius(q, savedAnswer);
 
   const helpBtn = document.getElementById("help-btn");
   const hintBox = document.getElementById("hint-box");
@@ -975,6 +1204,12 @@ function renderQuestion() {
       if (q.type === "grid-shade") {
         parts.push(`Tap cells to shade them on a ${q.rows} by ${q.cols} grid. ${q.matchMode === "count" ? `Shade ${q.targetCount} cells in total.` : "Shade cells to match the pattern described."}`);
       }
+      if (q.type === "click-a-side") {
+        parts.push(`Tap the side of the shape that answers the question. The sides are: ${q.segments.map((s) => s.label || s.id).join(", ")}.`);
+      }
+      if (q.type === "drag-a-radius") {
+        parts.push("Drag the blue handle around the circle until the angle it makes with the fixed grey line matches what's asked for.");
+      }
       speakText(parts.join(". "));
     });
   }
@@ -993,6 +1228,9 @@ function renderQuestion() {
   } else if (q.type === "grid-shade") {
     // Tap-to-toggle interaction is already wired up by setupGridShade()
     // above, same reasoning as the numberline branch.
+  } else if (q.type === "click-a-side" || q.type === "drag-a-radius") {
+    // Click/drag interaction is already wired up by setupClickSide()/
+    // setupDragRadius() above, same reasoning as the numberline branch.
   } else {
     const input = document.getElementById("short-answer");
     input.addEventListener("input", () => {
@@ -1037,7 +1275,7 @@ async function finishSession() {
       // null (not undefined) when unanswered/not applicable — Firestore
       // rejects undefined field values, and this object gets persisted
       // as part of the session record below.
-      userAnswerRaw: q.type === "numberline" && userAnswer !== undefined ? userAnswer : null,
+      userAnswerRaw: (q.type === "numberline" || q.type === "drag-a-radius") && userAnswer !== undefined ? userAnswer : null,
     };
   });
   const score = details.filter((d) => d.correct).length;
