@@ -314,6 +314,161 @@ function renderChartCanvas(canvasId, subjectKey, chart) {
   return instance;
 }
 
+// ---------- number-line questions (draggable marker) ----------
+//
+// A question can carry `type: "numberline"` instead of "mcq"/"short", with a
+// `numberline` field: { min, max, step?, correct, tolerance, correctLabel?,
+// ticks?: [{ value, label }], unitLabel? }. The learner drags (or taps, or
+// arrow-keys while focused) a marker along a horizontal track; the answer
+// stored is the snapped numeric value under the marker when they last moved
+// it. `tolerance` is how far either side of `correct` still counts — the
+// skill being tested is roughly locating a value on a scale, not landing on
+// a single pixel, so this app's questions should always set a sensible
+// tolerance (e.g. ±0.05 on a 0–1 probability scale) rather than 0.
+//
+// All the drag/keyboard listeners below are attached to elements created by
+// this same render pass (inside #main), the same pattern every other
+// question type already uses — so like the mcq option buttons and the
+// short-answer input, they're automatically discarded (no manual cleanup
+// needed) the next time renderQuestion() replaces main.innerHTML.
+function clampNumberLine(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function snapNumberLine(value, min, step) {
+  if (!step) return value;
+  const snapped = Math.round((value - min) / step) * step + min;
+  // Rounds away floating-point noise like 0.30000000000000004.
+  return Math.round(snapped * 1e9) / 1e9;
+}
+
+function renderNumberLineHtml(nl, savedAnswer) {
+  const initial = savedAnswer !== undefined ? savedAnswer : (nl.min + nl.max) / 2;
+  const ticks = nl.ticks && nl.ticks.length ? nl.ticks : [{ value: nl.min, label: String(nl.min) }, { value: nl.max, label: String(nl.max) }];
+  const ticksHtml = ticks
+    .map((t) => {
+      const pct = ((t.value - nl.min) / (nl.max - nl.min)) * 100;
+      return `<div class="numberline-tick" style="left:${pct}%"><span class="numberline-tick-mark"></span><span class="numberline-tick-label">${escapeHtml(t.label)}</span></div>`;
+    })
+    .join("");
+  return `
+    <div class="numberline-wrap">
+      <div class="numberline-value" id="nl-value">${savedAnswer !== undefined ? escapeHtml(`${savedAnswer}${nl.unitLabel ? " " + nl.unitLabel : ""}`) : "Drag the marker onto the line"}</div>
+      <div class="numberline-track" id="nl-track">
+        <div class="numberline-fill" id="nl-fill"></div>
+        ${ticksHtml}
+        <div class="numberline-marker" id="nl-marker" tabindex="0" role="slider" aria-valuemin="${nl.min}" aria-valuemax="${nl.max}" aria-valuenow="${initial}" aria-label="Answer position on the number line"></div>
+      </div>
+    </div>
+  `;
+}
+
+function setupNumberLine(q, savedAnswer) {
+  const nl = q.numberline;
+  const track = document.getElementById("nl-track");
+  const marker = document.getElementById("nl-marker");
+  const fill = document.getElementById("nl-fill");
+  const valueLabel = document.getElementById("nl-value");
+  const hasAnswer = savedAnswer !== undefined;
+  let value = hasAnswer ? savedAnswer : (nl.min + nl.max) / 2;
+
+  function paint(answered) {
+    const pct = ((value - nl.min) / (nl.max - nl.min)) * 100;
+    marker.style.left = `${pct}%`;
+    fill.style.width = `${pct}%`;
+    marker.setAttribute("aria-valuenow", String(value));
+    valueLabel.textContent = answered ? `${value}${nl.unitLabel ? " " + nl.unitLabel : ""}` : "Drag the marker onto the line";
+  }
+
+  // Only writes state.answers[q.id] once the learner actually moves the
+  // marker — the starting position drawn at the midpoint (or wherever a
+  // previous visit left it) is just a visual default, not an answer, so
+  // leaving a question untouched still correctly counts as "no answer
+  // given" rather than silently marking a guess right or wrong.
+  function commit(newValue) {
+    value = newValue;
+    state.answers[q.id] = value;
+    paint(true);
+  }
+
+  paint(hasAnswer);
+
+  function valueFromClientX(clientX) {
+    const rect = track.getBoundingClientRect();
+    const fraction = clampNumberLine((clientX - rect.left) / rect.width, 0, 1);
+    const raw = nl.min + fraction * (nl.max - nl.min);
+    return snapNumberLine(clampNumberLine(raw, nl.min, nl.max), nl.min, nl.step);
+  }
+
+  let dragging = false;
+  track.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    track.setPointerCapture(e.pointerId);
+    commit(valueFromClientX(e.clientX));
+    e.preventDefault();
+  });
+  track.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    commit(valueFromClientX(e.clientX));
+  });
+  const endDrag = (e) => {
+    dragging = false;
+    if (track.hasPointerCapture && track.hasPointerCapture(e.pointerId)) track.releasePointerCapture(e.pointerId);
+  };
+  track.addEventListener("pointerup", endDrag);
+  track.addEventListener("pointercancel", endDrag);
+
+  marker.addEventListener("keydown", (e) => {
+    const step = nl.step || (nl.max - nl.min) / 20;
+    if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+      commit(snapNumberLine(clampNumberLine(value - step, nl.min, nl.max), nl.min, nl.step));
+      e.preventDefault();
+    } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+      commit(snapNumberLine(clampNumberLine(value + step, nl.min, nl.max), nl.min, nl.step));
+      e.preventDefault();
+    }
+  });
+}
+
+// A static (non-draggable) replay of a numberline question for the results/
+// assessor screens: shows the tolerance band around the correct value, a
+// marker at the correct value, and — when the learner actually answered —
+// a second marker at wherever they left it, so "how close was I" is visible
+// at a glance instead of just two numbers in text. `userValue` is the raw
+// numeric answer (or undefined if the question was left unanswered).
+function renderNumberLineReviewHtml(nl, userValue, wasCorrect) {
+  const pct = (v) => ((clampNumberLine(v, nl.min, nl.max) - nl.min) / (nl.max - nl.min)) * 100;
+  const tol = nl.tolerance || 0;
+  const bandLeft = pct(nl.correct - tol);
+  const bandRight = pct(nl.correct + tol);
+  const ticks = nl.ticks && nl.ticks.length ? nl.ticks : [{ value: nl.min, label: String(nl.min) }, { value: nl.max, label: String(nl.max) }];
+  const ticksHtml = ticks
+    .map((t) => `<div class="numberline-tick" style="left:${pct(t.value)}%"><span class="numberline-tick-mark"></span><span class="numberline-tick-label">${escapeHtml(t.label)}</span></div>`)
+    .join("");
+  const hasUserValue = userValue !== undefined && userValue !== null;
+  // Coloured red/green by whether that answer was actually marked correct —
+  // this widget also appears (unconditionally) in the assessor view for
+  // correct answers, so it can't just assume "shown = wrong".
+  const userMarkerClass = wasCorrect ? "numberline-marker-user-correct" : "numberline-marker-user-incorrect";
+  const userMarkerHtml = hasUserValue
+    ? `<div class="numberline-marker numberline-marker-user ${userMarkerClass}" style="left:${pct(userValue)}%" title="Your answer"></div>`
+    : "";
+  return `
+    <div class="numberline-review">
+      <div class="numberline-track numberline-track-readonly">
+        <div class="numberline-tolerance-band" style="left:${bandLeft}%; width:${Math.max(0, bandRight - bandLeft)}%;"></div>
+        ${ticksHtml}
+        <div class="numberline-marker numberline-marker-correct" style="left:${pct(nl.correct)}%" title="Correct answer"></div>
+        ${userMarkerHtml}
+      </div>
+      <div class="numberline-review-legend">
+        ${hasUserValue ? `<span><span class="legend-dot ${wasCorrect ? "legend-dot-user-correct" : "legend-dot-user-incorrect"}"></span>Your answer</span>` : ""}
+        <span><span class="legend-dot legend-dot-correct"></span>Correct answer${tol ? " (± tolerance shown)" : ""}</span>
+      </div>
+    </div>
+  `;
+}
+
 // A lightweight overlay (not a full screen change) so it can be opened from
 // mid-question without losing her place or resetting the stopwatch. Shows
 // every term for the subject, filtered live by a search box.
@@ -674,6 +829,8 @@ function renderQuestion() {
     answerHtml = `<div class="option-list">${q.options
       .map((opt, i) => `<button class="option-btn ${savedAnswer === i ? "selected" : ""}" data-index="${i}">${escapeHtml(opt)}</button>`)
       .join("")}</div>`;
+  } else if (q.type === "numberline") {
+    answerHtml = renderNumberLineHtml(q.numberline, savedAnswer);
   } else {
     answerHtml = `<input type="text" class="text-answer" id="short-answer" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your answer" value="${savedAnswer !== undefined ? escapeHtml(savedAnswer) : ""}" />`;
   }
@@ -707,6 +864,7 @@ function renderQuestion() {
   `;
   updateClock(state.stopwatch.elapsed);
   if (q.chart) renderChartCanvas("question-chart", state.subjectKey, q.chart);
+  if (q.type === "numberline") setupNumberLine(q, savedAnswer);
 
   const helpBtn = document.getElementById("help-btn");
   const hintBox = document.getElementById("hint-box");
@@ -726,6 +884,9 @@ function renderQuestion() {
       if (q.type === "mcq") {
         q.options.forEach((opt, i) => parts.push(`Option ${i + 1}: ${opt}`));
       }
+      if (q.type === "numberline") {
+        parts.push(`Drag the marker to a position between ${q.numberline.min} and ${q.numberline.max}${q.numberline.unitLabel ? " " + q.numberline.unitLabel : ""}`);
+      }
       speakText(parts.join(". "));
     });
   }
@@ -738,6 +899,9 @@ function renderQuestion() {
         btn.classList.add("selected");
       });
     });
+  } else if (q.type === "numberline") {
+    // Dragging/keyboard interaction is already wired up by setupNumberLine()
+    // above (called right after this markup was inserted into the page).
   } else {
     const input = document.getElementById("short-answer");
     input.addEventListener("input", () => {
@@ -778,6 +942,11 @@ async function finishSession() {
       source: q.source || null,
       grade: q.grade || null,
       chart: q.chart || null,
+      numberline: q.numberline || null,
+      // null (not undefined) when unanswered/not applicable — Firestore
+      // rejects undefined field values, and this object gets persisted
+      // as part of the session record below.
+      userAnswerRaw: q.type === "numberline" && userAnswer !== undefined ? userAnswer : null,
     };
   });
   const score = details.filter((d) => d.correct).length;
@@ -805,7 +974,7 @@ async function finishSession() {
     // in the assessor view, or if this question ever changes or is removed
     // from the data files down the line — without needing to re-look it up
     // from live content.
-    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart }) => ({
+    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart, numberline, userAnswerRaw }) => ({
       questionId,
       topicId,
       topicTitle,
@@ -817,6 +986,8 @@ async function finishSession() {
       source,
       grade,
       chart,
+      numberline,
+      userAnswerRaw,
     })),
   };
 
@@ -895,6 +1066,7 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
       }</div>
         <div style="font-weight:600; margin-top:4px;">${escapeHtml(d.prompt)}</div>
         ${!d.correct && d.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="result-chart-${i}"></canvas></div>` : ""}
+        ${!d.correct && d.numberline ? renderNumberLineReviewHtml(d.numberline, d.userAnswerRaw, d.correct) : ""}
         <div class="answers">Your answer: <strong>${escapeHtml(d.userAnswerDisplay)}</strong>${
           d.correct ? "" : `<br/>Correct answer: <strong>${escapeHtml(d.correctAnswerDisplay)}</strong>`
         }</div>
@@ -1116,6 +1288,7 @@ async function renderAssessorProfile(profileName) {
                 } ${a.source ? `<span class="paper-badge">${escapeHtml(a.source.code)} paper</span>` : ""}</div>
                 <div style="font-weight:600; margin-top:4px;">${escapeHtml(a.prompt || "(question text not recorded for this older session)")}</div>
                 ${a.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="assessor-chart-${i}-${j}"></canvas></div>` : ""}
+                ${a.numberline ? renderNumberLineReviewHtml(a.numberline, a.userAnswerRaw, a.correct) : ""}
                 <div class="answers">Answer given: <strong>${escapeHtml(a.userAnswer)}</strong>${
                   a.correct ? "" : `<br/>Correct answer: <strong>${escapeHtml(a.correctAnswer)}</strong>`
                 }</div>
