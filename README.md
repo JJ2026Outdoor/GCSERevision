@@ -286,7 +286,13 @@ stamp for the full paper name.
 
 It currently holds 43 Maths questions from the Summer 2025 Foundation-tier
 papers (Unit 1 non-calculator and Unit 2 calculator-allowed) you supplied,
-spread across all 5 Maths topics. A few notes on how they were chosen:
+spread across all 5 Maths topics, plus 17 English questions (source code
+`"SAM"`) transcribed from WJEC's official Sample Assessment Materials for
+Unit 1 (Context and Meaning, 5 questions on the poems 'Valentine' and 'i
+wanna be yours') and Unit 6 (Connections, 12 questions on the three unseen
+texts about the term 'BAME', Riz Ahmed's Commons speech, and Sathnam
+Sanghera's memoir 'The Boy with the Topknot'). A few notes on how they were
+chosen:
 
 - Only questions answerable with a single typed or picked answer made the
   cut. Anything that needed drawing an angle, shading a shape, marking a
@@ -295,13 +301,29 @@ spread across all 5 Maths topics. A few notes on how they were chosen:
   risk baking a wrong answer into a "real" past-paper question.
 - A couple (e.g. "put these three values in order") were reshaped into a
   multiple-choice question testing the same underlying maths, since the
-  original asked for a full ordered list rather than one answer.
-- These particular papers (code 3300U) are from WJEC's older, separate
+  original asked for a full ordered list rather than one answer. Several of
+  the English questions do the same for a "tick two true statements" format,
+  or are built from a mark scheme's "indicative content" bullet points for a
+  band-marked long-answer question (e.g. a 5-mark "explain the effect of
+  this metaphor" question) rather than transcribed directly — these are
+  flagged in a comment in `data/past-papers.js` next to each one.
+- These particular Maths papers (code 3300U) are from WJEC's older, separate
   "Mathematics" qualification rather than the newer combined "Mathematics
   and Numeracy" this app is otherwise built around — flagged at the time
   they were added, but included anyway since Foundation-tier content
   (number, algebra, geometry, ratio, probability & stats) overlaps heavily
   between the two.
+- The English "SAM" questions are sample assessment material, not real past
+  exam papers — WJEC won't run this qualification's exams for real until
+  summer 2027 — but they're WJEC's own official questions and mark schemes
+  for the new spec, which is as authoritative as it gets before then.
+  Units 2, 3, 4a/4b and 5 aren't represented: 2, 3 and 5 are
+  non-exam-assessment (coursework, marked on band descriptors — there's no
+  single correct answer to quiz), and 4a/4b (set-text exams: A Midsummer
+  Night's Dream, The Importance of Being Earnest, Refugee Boy, Pygmalion, An
+  Inspector Calls) need to know which specific text her school has chosen
+  before questions about it would mean anything to her — worth asking her
+  teacher, then these can be added the same way.
 
 **To add more papers later** (any subject, any series — just send them
 over): each question becomes one object appended to the `PAST_PAPER_QUESTIONS`
@@ -324,16 +346,25 @@ it as a base to correct and expand, not a finished bank:
   the spec's "Number" strand into two tests for a cleaner 5-test set).
 - **English is different.** The WJEC English Language and Literature GCSE is
   a brand-new, single combined qualification (not separate Language and
-  Literature GCSEs), and 3 of its 6 units are coursework-style
+  Literature GCSEs) with 6 units. Half are coursework-style
   non-exam-assessment tied to texts your daughter's school will choose: a
-  prose novel (Unit 2, "Belonging"), a Shakespeare play plus poetry anthology
-  (Unit 5, "Continuity and Change"), and a non-fiction anthology theme (Unit
-  3, "Influence and Power"). **A quiz app can't meaningfully test those until
-  you know her actual set texts** — ask her teacher which prose text,
+  prose novel (Unit 2, "Belonging"), a non-fiction anthology theme (Unit 3,
+  "Influence and Power"), and a Shakespeare play plus poetry anthology (Unit
+  5, "Continuity and Change"). **A quiz app can't meaningfully test those
+  until you know her actual set texts** — ask her teacher which prose text,
   Shakespeare play and anthology themes she's been given, and the Literary
-  Devices / Poetry tests can be rebuilt around them. The 5 tests here instead
-  build the general reading, SPaG and analysis-technique skills that underpin
-  the two written-exam units (Context and Meaning; Connections).
+  Devices / Poetry tests can be rebuilt around them. Unit 4 (Motivations) is
+  a written exam but is also set-text-specific — candidates answer on
+  whichever one of 5 set texts (A Midsummer Night's Dream, The Importance of
+  Being Earnest, Refugee Boy, Pygmalion, An Inspector Calls) their school
+  studied, split into Unit 4a (Single Award) or 4b (Double Award) depending
+  on which award she's doing — so it's in the same boat as the coursework
+  units until you know which text and award. The 5 tests here instead build
+  the general reading, SPaG and analysis-technique skills that underpin the
+  two units that don't depend on a specific set text (Unit 1, Context and
+  Meaning; Unit 6, Connections) — and see "Adding real past exam papers"
+  above for the real WJEC sample-assessment-material questions now added on
+  top of those two, transcribed from your uploaded SAMs.
 
 ## Files in this project
 
