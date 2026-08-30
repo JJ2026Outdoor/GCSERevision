@@ -1,0 +1,14 @@
+{
+  "name": "GCSE Revision",
+  "short_name": "GCSE Revision",
+  "description": "5-question daily GCSE revision tests for English, Maths and Science, with a progress dashboard.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7fb",
+  "theme_color": "#2f5fd6",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

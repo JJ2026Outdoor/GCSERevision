@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <title>GCSE Revision</title>
   <meta name="description" content="5-minute GCSE revision tests for English, Maths and Science, with a progress dashboard." />
+
+  <!-- PWA / offline support: manifest + icons + iOS-specific tags. iOS
+       Safari ignores the web manifest's icons for "Add to Home Screen" and
+       needs its own apple-touch-icon tag; apple-mobile-web-app-capable
+       makes it open full-screen (no browser chrome) once added, like a
+       real app rather than a bookmark. -->
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="theme-color" content="#2f5fd6" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="GCSE Revision" />
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700&display=swap" rel="stylesheet" />
@@ -30,5 +44,15 @@
     </main>
   </div>
   <script type="module" src="js/app.js?v=1"></script>
+  <!-- Registers the offline service worker. Kept as plain (non-module)
+       script, separate from app.js, so a problem in app.js's own code can
+       never prevent offline support from being set up. -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("service-worker.js").catch((err) => console.error("Service worker registration failed:", err));
+      });
+    }
+  </script>
 </body>
 </html>

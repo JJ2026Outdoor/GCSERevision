@@ -63,6 +63,39 @@ export function setCurrentProfile(name) {
   localStorage.setItem(PROFILE_KEY, name);
 }
 
+// Per-profile accessibility settings (dyslexia-friendly font, background
+// theme, read-aloud). Deliberately local-only, not synced through Firestore
+// even in "cloud" mode — these are reading/display preferences tied to a
+// name on this device, not revision data, and there's no need for them to
+// follow a profile between devices.
+const PROFILE_SETTINGS_KEY = "gcse_revision_profile_settings_v1";
+const DEFAULT_PROFILE_SETTINGS = { dyslexia: false, background: "default", audioHelp: false };
+
+function readAllProfileSettings() {
+  try {
+    const raw = localStorage.getItem(PROFILE_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (err) {
+    console.error("Could not read profile settings", err);
+    return {};
+  }
+}
+
+export function getProfileSettings(name) {
+  const all = readAllProfileSettings();
+  return { ...DEFAULT_PROFILE_SETTINGS, ...(all[name] || {}) };
+}
+
+export function setProfileSettings(name, settings) {
+  const all = readAllProfileSettings();
+  all[name] = { ...DEFAULT_PROFILE_SETTINGS, ...settings };
+  try {
+    localStorage.setItem(PROFILE_SETTINGS_KEY, JSON.stringify(all));
+  } catch (err) {
+    console.error("Could not save profile settings", err);
+  }
+}
+
 function readLocalResults() {
   try {
     const raw = localStorage.getItem(LOCAL_KEY);

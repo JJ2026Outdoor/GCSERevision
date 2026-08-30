@@ -523,18 +523,13 @@ input.text-answer:focus { outline: none; border-color: var(--primary); }
 .sync-badge.cloud { background: #e6f7ec; color: var(--good); }
 .sync-badge.local { background: #fff4e0; color: #a5670e; }
 
-/* Dyslexia-friendly display — toggled from the "Aa" button in the header.
-   Re-declares the same custom properties everything else already uses, so
-   the whole app re-themes without touching individual rules: a dyslexia-
-   tailored font (Lexend, falling back cleanly if it can't load), roomier
-   line/letter/word spacing, and a soft cream background with dark-grey
-   (never pure black) text instead of the stark light theme. */
+/* Dyslexia-friendly display — set per profile (see profile setup modal).
+   Font/spacing ONLY: a dyslexia-tailored font (Lexend, falling back cleanly
+   if it can't load) plus roomier line/letter/word spacing. Background colour
+   is a SEPARATE choice (see the bg-theme-* rules below) — a fixed cream
+   background isn't the right choice for everyone, so it's no longer tied to
+   this toggle. */
 body.dyslexia-mode {
-  --bg: #fbf5e6;
-  --card-bg: #fffbf0;
-  --text: #2b2b28;
-  --muted: #5c5748;
-  --border: #e6dcc3;
   font-family: "Lexend", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   letter-spacing: 0.01em;
   word-spacing: 0.05em;
@@ -554,6 +549,74 @@ body.dyslexia-mode .subject-card p,
 body.dyslexia-mode .test-row .meta {
   opacity: 1; /* the gradient subject cards use opacity for their subtitle; full opacity reads more clearly at wider letter-spacing */
 }
+
+/* Background themes — chosen independently of dyslexia mode, per profile.
+   Each re-declares the same custom properties the rest of the app already
+   uses, so switching theme re-colours everything without touching
+   individual rules. Kept to a deliberately small, contrast-checked set
+   rather than a free colour picker, so every option stays readable. */
+body.bg-theme-default { /* uses the :root defaults already set above */ }
+
+body.bg-theme-cream {
+  --bg: #fbf5e6;
+  --card-bg: #fffbf0;
+  --text: #2b2b28;
+  --muted: #5c5748;
+  --border: #e6dcc3;
+}
+
+body.bg-theme-blue {
+  --bg: #eaf1fb;
+  --card-bg: #ffffff;
+  --text: #1c232e;
+  --muted: #5b6675;
+  --border: #d3e0f0;
+}
+
+body.bg-theme-green {
+  --bg: #eaf6ec;
+  --card-bg: #ffffff;
+  --text: #1c2b1f;
+  --muted: #56695a;
+  --border: #d3e9d6;
+}
+
+body.bg-theme-grey {
+  --bg: #e9e9ea;
+  --card-bg: #f6f6f7;
+  --text: #202022;
+  --muted: #5a5a5d;
+  --border: #d4d4d6;
+}
+
+body.bg-theme-dark {
+  --bg: #1c1c1e;
+  --card-bg: #29292b;
+  --text: #f0f0f0;
+  --muted: #a3a3a8;
+  --border: #3c3c3f;
+}
+
+.profile-theme-swatches { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 16px 0; }
+.theme-swatch {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+.theme-swatch.selected { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary); }
+.theme-swatch.default { background: linear-gradient(135deg, #ffffff 50%, #f6f7fb 50%); }
+.theme-swatch.cream { background: #fbf5e6; }
+.theme-swatch.blue { background: #eaf1fb; }
+.theme-swatch.green { background: #eaf6ec; }
+.theme-swatch.grey { background: #e9e9ea; }
+.theme-swatch.dark { background: #1c1c1e; }
+
+.profile-modal-field { margin-bottom: 16px; }
+.profile-modal-checkbox { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; margin-bottom: 10px; }
+.profile-modal-checkbox input { width: 20px; height: 20px; }
 
 .assessor-link {
   text-align: center;

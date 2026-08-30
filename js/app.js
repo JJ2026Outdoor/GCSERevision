@@ -1,5 +1,5 @@
 import { SUBJECTS, buildSession, hasDoneDailyToday, flattenAnswers, computeTopicLevel, GRADES } from "./subjects.js";
-import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles } from "./storage.js";
+import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles, getProfileSettings, setProfileSettings } from "./storage.js";
 import { isCorrect, correctAnswerDisplay, userAnswerDisplay } from "./marking.js";
 import { Stopwatch, formatTime } from "./timer.js";
 import { renderDashboardScreen, SUBJECT_COLOR } from "./dashboard.js";
@@ -12,41 +12,27 @@ const main = document.getElementById("main");
 const profilePill = document.getElementById("profile-pill");
 const homeLink = document.getElementById("home-link");
 
-// ---------- dyslexia-friendly display toggle ----------
-// A per-device display preference (not tied to a profile or synced) — swaps
-// in a dyslexia-tailored font (Lexend) plus roomier spacing and a softer,
-// off-white background instead of stark white/black. See style.css's
-// .dyslexia-mode block for the actual overrides.
-const DYSLEXIA_KEY = "gcse_dyslexia_mode_v1";
+const BACKGROUND_THEMES = [
+  { key: "default", label: "Default", swatchClass: "default" },
+  { key: "cream", label: "Cream", swatchClass: "cream" },
+  { key: "blue", label: "Soft blue", swatchClass: "blue" },
+  { key: "green", label: "Soft green", swatchClass: "green" },
+  { key: "grey", label: "Soft grey", swatchClass: "grey" },
+  { key: "dark", label: "Dark", swatchClass: "dark" },
+];
 
-function applyDyslexiaMode(on) {
-  document.body.classList.toggle("dyslexia-mode", on);
-  const btn = document.getElementById("dyslexia-toggle");
-  if (btn) btn.setAttribute("aria-pressed", String(on));
+// Applies one profile's display settings (dyslexia font, background theme)
+// to the page. Read-aloud isn't a page-wide style, so it isn't applied here
+// — it's checked per-question from state.profileSettings instead.
+function applyDisplaySettings(settings) {
+  document.body.classList.toggle("dyslexia-mode", !!settings.dyslexia);
+  BACKGROUND_THEMES.forEach((t) => document.body.classList.remove(`bg-theme-${t.key}`));
+  document.body.classList.add(`bg-theme-${settings.background || "default"}`);
 }
-
-function initDyslexiaToggle() {
-  let stored = "0";
-  try {
-    stored = localStorage.getItem(DYSLEXIA_KEY) || "0";
-  } catch (err) {
-    // localStorage can be unavailable (e.g. private browsing); just default off.
-  }
-  applyDyslexiaMode(stored === "1");
-  document.getElementById("dyslexia-toggle").addEventListener("click", () => {
-    const isOn = !document.body.classList.contains("dyslexia-mode");
-    applyDyslexiaMode(isOn);
-    try {
-      localStorage.setItem(DYSLEXIA_KEY, isOn ? "1" : "0");
-    } catch (err) {
-      // Best-effort only — the toggle still works for this page view.
-    }
-  });
-}
-initDyslexiaToggle();
 
 const state = {
   profile: null,
+  profileSettings: { dyslexia: false, background: "default", audioHelp: false },
   subjectKey: null,
   session: null, // { mode, topicId, title, questions }
   qIndex: 0,
@@ -75,7 +61,8 @@ function updateProfilePill() {
 // no such failure mode and is also more accessible — it's keyboard- and
 // screen-reader-navigable, unlike the native prompt, which some
 // accessibility tools handle inconsistently.
-function showProfileNameModal(existingName) {
+function showProfileNameModal(existingName, existingSettings) {
+  const settings = existingSettings || { dyslexia: false, background: "default", audioHelp: false };
   return new Promise((resolve) => {
     const existingOverlay = document.getElementById("profile-name-overlay");
     if (existingOverlay) existingOverlay.remove();
@@ -88,8 +75,31 @@ function showProfileNameModal(existingName) {
         <div class="modal-header">
           <strong>Who's revising?</strong>
         </div>
-        <label for="profile-name-input" style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:8px;">Enter a name</label>
-        <input type="text" class="text-answer" id="profile-name-input" autocomplete="off" placeholder="e.g. Alex" value="${existingName ? escapeHtml(existingName) : ""}" />
+        <div class="profile-modal-field">
+          <label for="profile-name-input" style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:8px;">Enter a name</label>
+          <input type="text" class="text-answer" id="profile-name-input" autocomplete="off" placeholder="e.g. Alex" value="${existingName ? escapeHtml(existingName) : ""}" />
+        </div>
+
+        <div class="profile-modal-field">
+          <label class="profile-modal-checkbox">
+            <input type="checkbox" id="profile-dyslexia-check" ${settings.dyslexia ? "checked" : ""} />
+            Dyslexia-friendly font and spacing
+          </label>
+          <label class="profile-modal-checkbox">
+            <input type="checkbox" id="profile-audio-check" ${settings.audioHelp ? "checked" : ""} />
+            Add a "read aloud" button on questions
+          </label>
+        </div>
+
+        <div class="profile-modal-field">
+          <div style="font-size:0.85rem; color:var(--muted); margin-bottom:4px;">Background</div>
+          <div class="profile-theme-swatches" id="profile-theme-swatches">
+            ${BACKGROUND_THEMES.map(
+              (t) => `<button type="button" class="theme-swatch ${t.swatchClass} ${t.key === settings.background ? "selected" : ""}" data-theme="${t.key}" title="${t.label}" aria-label="${t.label}"></button>`
+            ).join("")}
+          </div>
+        </div>
+
         <button class="btn block" id="profile-name-save">Save</button>
       </div>
     `;
@@ -99,10 +109,31 @@ function showProfileNameModal(existingName) {
     input.focus();
     input.select();
 
+    let selectedTheme = settings.background || "default";
+    const swatchWrap = document.getElementById("profile-theme-swatches");
+    swatchWrap.querySelectorAll(".theme-swatch").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedTheme = btn.dataset.theme;
+        swatchWrap.querySelectorAll(".theme-swatch").forEach((b) => b.classList.toggle("selected", b === btn));
+        // Live preview so the choice can be judged against the actual app,
+        // not just a small swatch — reverted if Save isn't pressed (below).
+        applyDisplaySettings({ dyslexia: document.getElementById("profile-dyslexia-check").checked, background: selectedTheme });
+      });
+    });
+    document.getElementById("profile-dyslexia-check").addEventListener("change", (e) => {
+      applyDisplaySettings({ dyslexia: e.target.checked, background: selectedTheme });
+    });
+
     function submit() {
       const clean = input.value.trim();
+      const finalName = clean || existingName || "Guest";
+      const finalSettings = {
+        dyslexia: document.getElementById("profile-dyslexia-check").checked,
+        audioHelp: document.getElementById("profile-audio-check").checked,
+        background: selectedTheme,
+      };
       overlay.remove();
-      resolve(clean || existingName || "Guest");
+      resolve({ name: finalName, settings: finalSettings });
     }
 
     document.getElementById("profile-name-save").addEventListener("click", submit);
@@ -113,15 +144,22 @@ function showProfileNameModal(existingName) {
     // unlike the glossary/calculator modals — a profile name is required to
     // use the app at all (mirrors the old prompt(), which couldn't be
     // dismissed without a value either), so this modal always resolves via
-    // Save or Enter.
+    // Save or Enter. If closed some other way (e.g. browser back), the live
+    // preview above could be left applied without saving — acceptable here
+    // since applyDisplaySettings() is always re-run from saved settings on
+    // the next profile load/switch anyway.
   });
 }
 
 async function promptForProfile() {
   const existing = getCurrentProfile();
-  const finalName = await showProfileNameModal(existing);
-  setCurrentProfile(finalName);
-  state.profile = finalName;
+  const existingSettings = existing ? getProfileSettings(existing) : undefined;
+  const { name, settings } = await showProfileNameModal(existing, existingSettings);
+  setCurrentProfile(name);
+  setProfileSettings(name, settings);
+  state.profile = name;
+  state.profileSettings = settings;
+  applyDisplaySettings(settings);
   updateProfilePill();
 }
 
@@ -129,6 +167,17 @@ profilePill.addEventListener("click", async () => {
   await promptForProfile();
   renderHome();
 });
+
+// The header "Aa" button now opens the same settings modal for whichever
+// profile is currently active — a quick way to adjust display/audio
+// settings without re-entering the name from scratch.
+const dyslexiaToggleBtn = document.getElementById("dyslexia-toggle");
+if (dyslexiaToggleBtn) {
+  dyslexiaToggleBtn.addEventListener("click", async () => {
+    await promptForProfile();
+    renderHome();
+  });
+}
 
 homeLink.addEventListener("click", () => renderHome());
 
@@ -140,6 +189,8 @@ async function boot() {
   const existing = getCurrentProfile();
   if (existing) {
     state.profile = existing;
+    state.profileSettings = getProfileSettings(existing);
+    applyDisplaySettings(state.profileSettings);
   } else {
     await promptForProfile();
   }
@@ -305,6 +356,22 @@ function showGlossaryModal(subjectKey) {
 
 // Basic four-function calculator, maths only. Same overlay pattern as the
 // glossary modal — a lightweight non-blocking popup, not a screen change.
+// Reads text aloud using the browser's built-in Web Speech API — no
+// external service, no API key, works offline. Voice quality varies by
+// device/OS (this is the browser/OS's own voice, not something the app
+// controls). Cancels any speech already in progress first, so tapping
+// "Read aloud" again (or on a new question) doesn't overlap two readings.
+function speakText(text) {
+  if (!("speechSynthesis" in window)) {
+    alert("Sorry, this browser doesn't support reading text aloud.");
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 0.95;
+  window.speechSynthesis.speak(utterance);
+}
+
 function showCalculatorModal() {
   const existing = document.getElementById("calculator-overlay");
   if (existing) existing.remove();
@@ -590,6 +657,7 @@ function updateClock(elapsed) {
 
 function renderQuestion() {
   destroyActiveCharts();
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   const session = state.session;
   const q = session.questions[state.qIndex];
   const total = session.questions.length;
@@ -629,6 +697,7 @@ function renderQuestion() {
       <button class="btn secondary small" id="help-btn" type="button">🤔 Need help?</button>
       <button class="btn secondary small" id="glossary-btn" type="button">📖 Key words</button>
       ${state.subjectKey === "maths" ? `<button class="btn secondary small" id="calc-btn" type="button">🧮 Calculator</button>` : ""}
+      ${state.profileSettings && state.profileSettings.audioHelp ? `<button class="btn secondary small" id="read-aloud-btn" type="button">🔊 Read aloud</button>` : ""}
     </div>
     <div class="hint-box" id="hint-box" hidden>${escapeHtml(hintText)}</div>
     ${answerHtml}
@@ -648,6 +717,18 @@ function renderQuestion() {
   document.getElementById("glossary-btn").addEventListener("click", () => showGlossaryModal(state.subjectKey));
   const calcBtn = document.getElementById("calc-btn");
   if (calcBtn) calcBtn.addEventListener("click", showCalculatorModal);
+  const readAloudBtn = document.getElementById("read-aloud-btn");
+  if (readAloudBtn) {
+    readAloudBtn.addEventListener("click", () => {
+      const parts = [];
+      if (q.passage) parts.push(q.passage);
+      parts.push(q.prompt);
+      if (q.type === "mcq") {
+        q.options.forEach((opt, i) => parts.push(`Option ${i + 1}: ${opt}`));
+      }
+      speakText(parts.join(". "));
+    });
+  }
 
   if (q.type === "mcq") {
     main.querySelectorAll(".option-btn").forEach((btn) => {
@@ -869,14 +950,58 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
 // no per-profile access rules, so this view doesn't reveal anything that
 // wasn't already reachable in principle — it just makes it usable.
 
-function openAssessorView() {
+// In-page modal for the assessor PIN, replacing window.prompt() — same
+// reasoning as the profile-name modal fix: prompt() can be silently
+// suppressed by the browser (notably Safari on iOS) with no way for the
+// page to detect it, which would make this view permanently inaccessible
+// with no visible error. A same-page modal has no such failure mode.
+function showAssessorPinModal() {
+  return new Promise((resolve) => {
+    const existing = document.getElementById("assessor-pin-overlay");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.id = "assessor-pin-overlay";
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-header">
+          <strong>Assessor PIN</strong>
+          <button class="modal-close" id="assessor-pin-close" aria-label="Close">✕</button>
+        </div>
+        <input type="password" inputmode="numeric" class="text-answer" id="assessor-pin-input" autocomplete="off" placeholder="Enter PIN" />
+        <button class="btn block" id="assessor-pin-submit">Continue</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const input = document.getElementById("assessor-pin-input");
+    input.focus();
+
+    function close(value) {
+      overlay.remove();
+      resolve(value);
+    }
+
+    document.getElementById("assessor-pin-close").addEventListener("click", () => close(null));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close(null);
+    });
+    document.getElementById("assessor-pin-submit").addEventListener("click", () => close(input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") close(input.value);
+    });
+  });
+}
+
+async function openAssessorView() {
   if (!ASSESSOR_PIN || ASSESSOR_PIN === "CHANGE_ME") {
     window.alert(
       "The assessor view needs a PIN set before it can be used.\n\nOpen firebase-config.js, change ASSESSOR_PIN from \"CHANGE_ME\" to whatever you like, then upload it."
     );
     return;
   }
-  const entered = window.prompt("Enter the assessor PIN:");
+  const entered = await showAssessorPinModal();
   if (entered === null) return;
   if (entered !== ASSESSOR_PIN) {
     window.alert("Incorrect PIN.");
@@ -934,6 +1059,40 @@ async function renderAssessorProfile(profileName) {
   main.innerHTML = `<div class="empty-state">Loading…</div>`;
   const results = (await getResults({ profile: profileName })).slice().reverse(); // newest first
 
+  // Same weak-topic detection already used to steer in-session difficulty
+  // (computeWeakTopics/WEAK_STREAK_THRESHOLD, above) — surfaced here as a
+  // quick "where does she need help" summary, grouped by subject, rather
+  // than making a parent scroll through every session looking for a pattern.
+  const chronological = results.slice().reverse(); // oldest first, for streak calculation
+  const weakBySubject = Object.values(SUBJECTS)
+    .map((subject) => {
+      const subjectResults = chronological.filter((r) => r.subject === subject.key);
+      const flat = flattenAnswers(subjectResults);
+      const weak = computeWeakTopics(flat).filter((w) => w.streak >= WEAK_STREAK_THRESHOLD);
+      return { subject, weak };
+    })
+    .filter((s) => s.weak.length);
+
+  const weakSummaryHtml = weakBySubject.length
+    ? `
+      <div class="card">
+        <h3 style="margin-top:0;">Currently struggling with</h3>
+        ${weakBySubject
+          .map(
+            (s) => `
+          <div style="margin-bottom:10px;">
+            <div style="font-weight:700; color:${SUBJECT_COLOR[s.subject.key]};">${escapeHtml(s.subject.name)}</div>
+            ${s.weak
+              .map((w) => `<div style="font-size:0.9rem; margin-left:4px;">${escapeHtml(w.topicTitle)} — ${w.streak} wrong in a row (most recent)</div>`)
+              .join("")}
+          </div>
+        `
+          )
+          .join("")}
+      </div>
+    `
+    : "";
+
   const sessionRows = results
     .map((r, i) => {
       const date = new Date(r.timestamp).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -977,6 +1136,7 @@ async function renderAssessorProfile(profileName) {
       <h2 style="margin-top:0;">${escapeHtml(profileName)}</h2>
       <div style="color:var(--muted); font-size:0.88rem; margin-top:-8px;">${results.length} session${results.length === 1 ? "" : "s"} recorded — tap one to see every question and answer.</div>
     </div>
+    ${weakSummaryHtml}
     ${sessionRows || `<div class="empty-state">No sessions yet.</div>`}
   `;
 
