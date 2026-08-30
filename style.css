@@ -357,6 +357,44 @@ main {
 
 .option-btn.selected { border-color: var(--primary); background: #eaf0fe; }
 
+/* Picture-based MCQ options — options can be `{ label, svg }` instead of a
+   plain string (e.g. "which of these is a cylinder"). Laid out as a grid
+   of square-ish cards instead of the default stacked list. */
+.option-list-picture {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.option-btn-picture {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 14px 8px;
+}
+
+.option-picture {
+  display: block;
+  width: 56px;
+  height: 56px;
+}
+
+.option-picture svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.option-picture-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.option-btn-picture.selected .option-picture-label { color: var(--primary); font-weight: 600; }
+
 input.text-answer {
   width: 100%;
   padding: 14px;
@@ -516,6 +554,44 @@ input.text-answer:focus { outline: none; border-color: var(--primary); }
 .legend-dot-correct { border-color: var(--good); }
 .legend-dot-user-correct { border-color: var(--good); }
 .legend-dot-user-incorrect { border-color: var(--bad); }
+
+/* Tap-to-toggle grid question type — "shade N cells" / "shade for
+   rotational symmetry" style questions. */
+.grid-shade-wrap {
+  margin: 8px 0 20px;
+}
+
+.grid-shade {
+  display: grid;
+  gap: 4px;
+  max-width: 360px;
+  margin: 0 auto 14px;
+}
+
+.grid-shade-cell {
+  aspect-ratio: 1;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  cursor: pointer;
+  padding: 0;
+}
+
+.grid-shade-cell.shaded {
+  background: var(--primary);
+  border-color: var(--primary-dark);
+}
+
+.grid-shade-cell.given {
+  background: var(--muted);
+  border-color: var(--muted);
+  cursor: default;
+  opacity: 0.85;
+}
+
+.grid-shade-hint-row {
+  text-align: center;
+}
 
 .nav-row {
   display: flex;

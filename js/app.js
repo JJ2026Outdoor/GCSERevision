@@ -1,6 +1,6 @@
 import { SUBJECTS, buildSession, hasDoneDailyToday, flattenAnswers, computeTopicLevel, GRADES } from "./subjects.js";
 import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles, getProfileSettings, setProfileSettings } from "./storage.js";
-import { isCorrect, correctAnswerDisplay, userAnswerDisplay } from "./marking.js";
+import { isCorrect, correctAnswerDisplay, userAnswerDisplay, optionLabel } from "./marking.js";
 import { Stopwatch, formatTime } from "./timer.js";
 import { renderDashboardScreen, SUBJECT_COLOR } from "./dashboard.js";
 import { GLOSSARY } from "../data/glossary.js";
@@ -469,6 +469,75 @@ function renderNumberLineReviewHtml(nl, userValue, wasCorrect) {
   `;
 }
 
+// ---------- grid-shade questions (tap-to-toggle grid) ----------
+//
+// A question can carry `type: "grid-shade"` instead of "mcq"/"short"/
+// "numberline", with top-level fields: `rows`, `cols`, `givenShaded` (an
+// array of pre-shaded, non-toggleable cell indices), `matchMode: "count" |
+// "exact"`, and either `targetCount` (matchMode "count" — any N cells
+// shaded is correct, position doesn't matter, e.g. "shade 3/8 of this
+// grid") or `targetShaded` (matchMode "exact" — the shaded set must match
+// this exact array of cell indices, given cells included, e.g. "shade
+// cells so the pattern has rotational symmetry"). Cells are indexed
+// row-major, 0-based: index = row * cols + col.
+//
+// Like numberline, the stored answer (a plain array of shaded cell
+// indices, given cells included) is only written to state.answers[q.id]
+// once the learner actually taps a cell or hits "Clear my shading" — the
+// given cells are drawn as shaded from the start, but that's a starting
+// position, not an answer, so an untouched question still correctly
+// counts as unanswered.
+function renderGridShadeHtml(q, savedAnswer) {
+  const total = q.rows * q.cols;
+  const given = q.givenShaded || [];
+  const shaded = new Set(savedAnswer || given);
+  const givenSet = new Set(given);
+  const cellsHtml = Array.from({ length: total }, (_, i) => {
+    const isGiven = givenSet.has(i);
+    const isShaded = shaded.has(i);
+    return `<button type="button" class="grid-shade-cell ${isShaded ? "shaded" : ""} ${isGiven ? "given" : ""}" data-index="${i}" ${isGiven ? "disabled" : ""} aria-label="Cell ${i + 1}${isShaded ? ", shaded" : ", not shaded"}"></button>`;
+  }).join("");
+  return `
+    <div class="grid-shade-wrap">
+      <div class="grid-shade" id="grid-shade" style="grid-template-columns: repeat(${q.cols}, 1fr);">
+        ${cellsHtml}
+      </div>
+      <div class="grid-shade-hint-row">
+        <button class="btn secondary small" id="grid-shade-clear" type="button">Clear my shading</button>
+      </div>
+    </div>
+  `;
+}
+
+function setupGridShade(q, savedAnswer) {
+  const grid = document.getElementById("grid-shade");
+  const clearBtn = document.getElementById("grid-shade-clear");
+  const given = q.givenShaded || [];
+
+  grid.querySelectorAll(".grid-shade-cell").forEach((cell) => {
+    if (cell.disabled) return; // given cells aren't toggleable
+    cell.addEventListener("click", () => {
+      const index = Number(cell.dataset.index);
+      const current = new Set(state.answers[q.id] || savedAnswer || given);
+      if (current.has(index)) current.delete(index);
+      else current.add(index);
+      state.answers[q.id] = [...current];
+      cell.classList.toggle("shaded", current.has(index));
+      cell.setAttribute("aria-label", `Cell ${index + 1}${current.has(index) ? ", shaded" : ", not shaded"}`);
+    });
+  });
+
+  clearBtn.addEventListener("click", () => {
+    state.answers[q.id] = [...given];
+    grid.querySelectorAll(".grid-shade-cell").forEach((cell) => {
+      const index = Number(cell.dataset.index);
+      const isShaded = given.includes(index);
+      cell.classList.toggle("shaded", isShaded);
+      cell.setAttribute("aria-label", `Cell ${index + 1}${isShaded ? ", shaded" : ", not shaded"}`);
+    });
+  });
+}
+
 // A lightweight overlay (not a full screen change) so it can be opened from
 // mid-question without losing her place or resetting the stopwatch. Shows
 // every term for the subject, filtered live by a search box.
@@ -826,11 +895,26 @@ function renderQuestion() {
 
   let answerHtml = "";
   if (q.type === "mcq") {
-    answerHtml = `<div class="option-list">${q.options
-      .map((opt, i) => `<button class="option-btn ${savedAnswer === i ? "selected" : ""}" data-index="${i}">${escapeHtml(opt)}</button>`)
+    // Options are usually plain strings, but Geometry & Measures questions
+    // can use picture options instead — `{ label, svg }` — for things like
+    // "which of these is a cylinder" that don't have a sensible text form.
+    const hasPictureOptions = q.options.some((opt) => typeof opt === "object");
+    answerHtml = `<div class="option-list ${hasPictureOptions ? "option-list-picture" : ""}">${q.options
+      .map((opt, i) => {
+        const selected = savedAnswer === i ? "selected" : "";
+        if (typeof opt === "object") {
+          return `<button class="option-btn option-btn-picture ${selected}" data-index="${i}">
+            <span class="option-picture">${opt.svg}</span>
+            <span class="option-picture-label">${escapeHtml(opt.label)}</span>
+          </button>`;
+        }
+        return `<button class="option-btn ${selected}" data-index="${i}">${escapeHtml(opt)}</button>`;
+      })
       .join("")}</div>`;
   } else if (q.type === "numberline") {
     answerHtml = renderNumberLineHtml(q.numberline, savedAnswer);
+  } else if (q.type === "grid-shade") {
+    answerHtml = renderGridShadeHtml(q, savedAnswer);
   } else {
     answerHtml = `<input type="text" class="text-answer" id="short-answer" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your answer" value="${savedAnswer !== undefined ? escapeHtml(savedAnswer) : ""}" />`;
   }
@@ -865,6 +949,7 @@ function renderQuestion() {
   updateClock(state.stopwatch.elapsed);
   if (q.chart) renderChartCanvas("question-chart", state.subjectKey, q.chart);
   if (q.type === "numberline") setupNumberLine(q, savedAnswer);
+  if (q.type === "grid-shade") setupGridShade(q, savedAnswer);
 
   const helpBtn = document.getElementById("help-btn");
   const hintBox = document.getElementById("hint-box");
@@ -882,10 +967,13 @@ function renderQuestion() {
       if (q.passage) parts.push(q.passage);
       parts.push(q.prompt);
       if (q.type === "mcq") {
-        q.options.forEach((opt, i) => parts.push(`Option ${i + 1}: ${opt}`));
+        q.options.forEach((opt, i) => parts.push(`Option ${i + 1}: ${optionLabel(opt)}`));
       }
       if (q.type === "numberline") {
         parts.push(`Drag the marker to a position between ${q.numberline.min} and ${q.numberline.max}${q.numberline.unitLabel ? " " + q.numberline.unitLabel : ""}`);
+      }
+      if (q.type === "grid-shade") {
+        parts.push(`Tap cells to shade them on a ${q.rows} by ${q.cols} grid. ${q.matchMode === "count" ? `Shade ${q.targetCount} cells in total.` : "Shade cells to match the pattern described."}`);
       }
       speakText(parts.join(". "));
     });
@@ -902,6 +990,9 @@ function renderQuestion() {
   } else if (q.type === "numberline") {
     // Dragging/keyboard interaction is already wired up by setupNumberLine()
     // above (called right after this markup was inserted into the page).
+  } else if (q.type === "grid-shade") {
+    // Tap-to-toggle interaction is already wired up by setupGridShade()
+    // above, same reasoning as the numberline branch.
   } else {
     const input = document.getElementById("short-answer");
     input.addEventListener("input", () => {
