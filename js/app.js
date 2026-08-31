@@ -1181,12 +1181,37 @@ function buildCalendarHtml(results) {
   `;
 }
 
+// How many consecutive days (ending today, or ending yesterday if nothing's
+// been done yet today) have at least one completed session, any subject.
+// Reuses the same doneDates-by-toDateString() approach as the calendar above
+// so the two stay consistent with each other. Deliberately doesn't zero out
+// the moment a new day starts with nothing done yet — "yesterday" still
+// counts until today ends with nothing logged, otherwise the number would
+// flicker to 0 first thing every morning before she's had a chance to open
+// the app.
+function computeStreak(results) {
+  const doneDates = new Set(results.map((r) => new Date(r.timestamp).toDateString()));
+  if (!doneDates.size) return 0;
+  const cursor = new Date();
+  if (!doneDates.has(cursor.toDateString())) {
+    cursor.setDate(cursor.getDate() - 1);
+    if (!doneDates.has(cursor.toDateString())) return 0;
+  }
+  let streak = 0;
+  while (doneDates.has(cursor.toDateString())) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
 // ---------- HOME ----------
 
 async function renderHome() {
   destroyActiveCharts();
   main.innerHTML = `<div class="empty-state">Loading your progress…</div>`;
   const results = await getResults({ profile: state.profile });
+  const streak = computeStreak(results);
 
   const subjectCards = Object.values(SUBJECTS)
     .map((subject) => {
@@ -1220,6 +1245,7 @@ async function renderHome() {
     <div class="card">
       <div>
         <strong>Hi ${escapeHtml(state.profile)} 👋</strong>
+        ${streak > 0 ? `<span class="streak-badge" title="Consecutive days with at least one completed session">🔥 ${streak} day streak</span>` : ""}
         <div style="color:var(--muted); font-size:0.85rem; margin-top:2px;">Pick a subject — 5 random questions, however long it takes</div>
       </div>
       <div class="subject-grid">${subjectCards}</div>
@@ -1403,6 +1429,17 @@ function updateClock(elapsed) {
     if (remaining <= 0 && !state.examFinishing) {
       state.examFinishing = true;
       finishSession({ timedOut: true });
+    }
+    // Piggybacks on the same once-a-second tick that already drives the
+    // countdown, rather than hooking a callback into every answer-type's own
+    // commit/toggle/select logic (numberline drag, grid-shade tap, click-a-
+    // region select, mcq click, short-answer input) individually — at most a
+    // one-second lag between answering and the count updating, which isn't
+    // perceptible, for a much smaller diff across the answer-handling code.
+    const progressEl = document.getElementById("exam-progress");
+    if (progressEl) {
+      const answered = session.questions.filter((q) => state.answers[q.id] !== undefined).length;
+      progressEl.textContent = `${answered} of ${session.questions.length} answered`;
     }
   } else {
     clockEl.textContent = formatTime(elapsed);
@@ -1725,7 +1762,10 @@ function renderExamPaper() {
 
   main.innerHTML = `
     <div class="timer-bar exam-sticky-bar">
-      <div>⏳ Time left <span class="clock" id="clock">0:00</span></div>
+      <div>
+        ⏳ Time left <span class="clock" id="clock">0:00</span>
+        <div class="exam-progress-line" id="exam-progress">0 of ${total} answered</div>
+      </div>
       <div style="color:var(--muted); font-size:0.85rem;">Exam: ${escapeHtml(subject.name)}</div>
       ${showCalcBtn ? `<button class="btn secondary small" id="calc-btn" type="button">🧮 Calculator</button>` : ""}
     </div>
