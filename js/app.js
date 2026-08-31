@@ -1,4 +1,15 @@
-import { SUBJECTS, buildSession, hasDoneDailyToday, flattenAnswers, computeTopicLevel, GRADES, getAvailablePapers, pickExamPaper } from "./subjects.js";
+import {
+  SUBJECTS,
+  buildSession,
+  hasDoneDailyToday,
+  flattenAnswers,
+  computeTopicLevel,
+  GRADES,
+  getAvailablePapers,
+  pickExamPaper,
+  timeAllowedMinutes,
+  UNCONFIRMED_TIME_ALLOWED_PAPER_KEYS
+} from "./subjects.js";
 import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles, getProfileSettings, setProfileSettings } from "./storage.js";
 import { isCorrect, correctAnswerDisplay, userAnswerDisplay, optionLabel, classifyAngleDeg } from "./marking.js";
 import { Stopwatch, formatTime } from "./timer.js";
@@ -1324,6 +1335,25 @@ async function startExam(subjectKey) {
   beginSession(subjectKey, session);
 }
 
+// Manual override reached from the assessor view's new "Exam papers" list —
+// starts one specific real paper immediately, for a chosen profile, bypassing
+// both the Saturday rotation gate and pickExamPaper()'s "least recently sat"
+// auto-selection entirely. The profile being browsed in assessor view isn't
+// necessarily the one currently active on this device (assessor view can
+// look at any profile's history), so this switches the active profile first
+// — exactly like tapping the profile pill — so the resulting session, and
+// the screen the app lands on afterwards, both belong to the right child.
+async function startExamFromAssessor(profileName, subjectKey, paperKey) {
+  setCurrentProfile(profileName);
+  state.profile = profileName;
+  state.profileSettings = getProfileSettings(profileName);
+  applyDisplaySettings(state.profileSettings);
+  updateProfilePill();
+  const priorResults = await getResults({ profile: profileName, subject: subjectKey });
+  const session = buildSession(subjectKey, { mode: "exam", paperKey }, priorResults);
+  beginSession(subjectKey, session);
+}
+
 function beginSession(subjectKey, session) {
   state.subjectKey = subjectKey;
   state.session = session;
@@ -2007,6 +2037,47 @@ async function renderAssessorProfile(profileName) {
     `
     : "";
 
+  // Lets a parent start any real exam paper immediately, for this profile,
+  // from inside the assessor view — the point being to test the exam flow
+  // (or run a specific paper on demand) without waiting for the next
+  // rotation Saturday. Every real paper across all 3 subjects is listed via
+  // getAvailablePapers(), independent of pickExamPaper()'s rotation logic —
+  // this is a deliberate manual override, not the automatic weekly pick.
+  const examPapersHtml = `
+    <div class="card">
+      <h3 style="margin-top:0;">Exam papers</h3>
+      <div style="color:var(--muted); font-size:0.85rem; margin-top:-6px; margin-bottom:10px;">Start any real past paper for ${escapeHtml(
+        profileName
+      )} right now — useful for testing, or to run one outside the usual Saturday rotation. Switches the active profile to ${escapeHtml(profileName)} and jumps straight into it.</div>
+      ${Object.values(SUBJECTS)
+        .map((subject) => {
+          const papers = getAvailablePapers(subject.key);
+          if (!papers.length) return "";
+          return `
+            <div style="margin-bottom:12px;">
+              <div style="font-weight:700; color:${SUBJECT_COLOR[subject.key]};">${escapeHtml(subject.name)}</div>
+              ${papers
+                .map((p) => {
+                  const mins = timeAllowedMinutes(p.key);
+                  const unconfirmed = UNCONFIRMED_TIME_ALLOWED_PAPER_KEYS.includes(p.key);
+                  return `
+                <div class="test-row" data-start-paper="${escapeHtml(p.key)}" data-subject="${subject.key}">
+                  <div>
+                    <div><strong>${escapeHtml(p.paper)}</strong></div>
+                    <div class="meta">${p.count} question${p.count === 1 ? "" : "s"} · ${mins} min${unconfirmed ? " (time unconfirmed)" : ""}</div>
+                  </div>
+                  <button class="btn secondary small" type="button">Start</button>
+                </div>
+              `;
+                })
+                .join("")}
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+
   const sessionRows = results
     .map((r, i) => {
       const date = new Date(r.timestamp).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -2055,10 +2126,14 @@ async function renderAssessorProfile(profileName) {
     </div>
     ${weakSummaryHtml}
     ${helpSummaryHtml}
+    ${examPapersHtml}
     ${sessionRows || `<div class="empty-state">No sessions yet.</div>`}
   `;
 
   document.getElementById("back-assessor").addEventListener("click", renderAssessorProfiles);
+  main.querySelectorAll("[data-start-paper]").forEach((row) => {
+    row.addEventListener("click", () => startExamFromAssessor(profileName, row.dataset.subject, row.dataset.startPaper));
+  });
   main.querySelectorAll("[data-toggle]").forEach((head) => {
     head.addEventListener("click", () => {
       const i = head.dataset.toggle;
