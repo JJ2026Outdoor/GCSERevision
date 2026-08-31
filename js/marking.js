@@ -66,12 +66,26 @@ export function isCorrect(question, userAnswer) {
     if (typeof userAnswer !== "number" || Number.isNaN(userAnswer)) return false;
     return classifyAngleDeg(userAnswer, question.classTolerance) === question.correctClass;
   }
+  if (question.type === "click-a-region") {
+    if (question.selectMode === "multi") {
+      if (!Array.isArray(userAnswer)) return false;
+      if (userAnswer.length !== question.correctRegionIds.length) return false;
+      const target = new Set(question.correctRegionIds);
+      return userAnswer.every((id) => target.has(id));
+    }
+    return question.correctRegionIds.includes(userAnswer);
+  }
   return false;
 }
 
 function segmentLabel(question, segmentId) {
   const seg = (question.segments || []).find((s) => s.id === segmentId);
   return seg ? seg.label || seg.id : segmentId;
+}
+
+function regionLabel(question, regionId) {
+  const r = (question.regions || []).find((x) => x.id === regionId);
+  return r ? r.label || r.id : regionId;
 }
 
 const ANGLE_CLASS_LABEL = {
@@ -96,6 +110,10 @@ export function correctAnswerDisplay(question) {
   if (question.type === "drag-a-radius") {
     return question.correctLabel || ANGLE_CLASS_LABEL[question.correctClass] || question.correctClass;
   }
+  if (question.type === "click-a-region") {
+    const labels = question.correctRegionIds.map((id) => regionLabel(question, id));
+    return question.selectMode === "multi" ? labels.join(" and ") : labels.join(" or ");
+  }
   return question.accept[0];
 }
 
@@ -113,6 +131,13 @@ export function userAnswerDisplay(question, userAnswer) {
   if (question.type === "drag-a-radius") {
     const tol = question.classTolerance;
     return `${Math.round(userAnswer)}° — ${ANGLE_CLASS_LABEL[classifyAngleDeg(userAnswer, tol)]}`;
+  }
+  if (question.type === "click-a-region") {
+    if (question.selectMode === "multi") {
+      if (!Array.isArray(userAnswer) || userAnswer.length === 0) return "(no regions selected)";
+      return userAnswer.map((id) => regionLabel(question, id)).join(", ");
+    }
+    return regionLabel(question, userAnswer);
   }
   return String(userAnswer);
 }

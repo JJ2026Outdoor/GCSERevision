@@ -761,6 +761,185 @@ function setupDragRadius(q, savedAnswer) {
   });
 }
 
+// ---------- click-a-region questions (tap one or more shapes/points on a diagram) ----------
+//
+// A question can carry `type: "click-a-region"` with top-level fields:
+// `viewBox` (defaults to "0 0 300 300"), `background` (array of purely
+// decorative, non-interactive SVG element descriptors — map outlines,
+// bearing lines, axes, north arrows — each `{ kind: "line"|"circle"|
+// "polygon"|"path"|"text", ...attrs }`, see renderBackgroundElementHtml()),
+// `regions` (array of clickable targets — `{ id, shape: "polygon"|"circle",
+// points? (polygon: array of {x,y}), cx?, cy?, r? (circle), hitR? (circle
+// only — invisible click-target radius, defaults to r+8 or 16, whichever's
+// bigger, since a plotted dot is a poor touch target at its true radius),
+// label? }`), `selectMode` ("single", the default — pick exactly one region,
+// like click-a-side; or "multi" — toggle any number on/off, exact-set
+// match required, like grid-shade's "exact" mode), and `correctRegionIds`
+// (array of region ids — in "single" mode any one of these counts correct,
+// e.g. "either of these two shapes"; in "multi" mode the learner's full
+// selection must match this set exactly).
+//
+// This generalises click-a-side from "pick one labelled side of a fixed
+// shape" to "pick one or more regions on an arbitrary diagram" — shape-
+// matching (click the congruent shapes), a point plotted from given data
+// (click the bearing intersection, click the outlier on a scatter plot),
+// anything where the correct answer is "click here" rather than a typed
+// value. Polygon regions are drawn with a real (if faint) fill so the whole
+// interior — not just the outline — receives clicks; circle regions get an
+// invisible, larger hit-circle layered on top of the visible dot, same
+// thin-visible/wide-hit-target split as click-a-side's segment lines.
+// Every background element carries pointer-events="none" directly (not just
+// via the CSS class) so a decorative element can never steal a click meant
+// for an interactive region beneath or beside it — this bit us once during
+// this type's own smoke test (a shape's letter label, positioned right at
+// its centroid, silently absorbed clicks meant for the shape itself) so the
+// fix is applied at both layers rather than relying on style.css alone.
+function renderBackgroundElementHtml(el) {
+  const cls = `click-region-bg-el ${el.className || ""}`;
+  if (el.kind === "line") {
+    return `<line x1="${el.x1}" y1="${el.y1}" x2="${el.x2}" y2="${el.y2}" class="${cls}" pointer-events="none" ${el.dash ? `stroke-dasharray="${el.dash}"` : ""} />`;
+  }
+  if (el.kind === "circle") {
+    return `<circle cx="${el.cx}" cy="${el.cy}" r="${el.r}" class="${cls}" pointer-events="none" />`;
+  }
+  if (el.kind === "polygon") {
+    const pts = el.points.map((p) => `${p.x},${p.y}`).join(" ");
+    return `<polygon points="${pts}" class="${cls}" pointer-events="none" />`;
+  }
+  if (el.kind === "path") {
+    return `<path d="${el.d}" class="${cls}" pointer-events="none" />`;
+  }
+  if (el.kind === "text") {
+    return `<text x="${el.x}" y="${el.y}" text-anchor="${el.anchor || "middle"}" class="${cls}" pointer-events="none">${escapeHtml(el.text)}</text>`;
+  }
+  return "";
+}
+
+function clickRegionLabel(q, id) {
+  const r = (q.regions || []).find((x) => x.id === id);
+  return r ? r.label || r.id : id;
+}
+
+function renderClickRegionHtml(q, savedAnswer) {
+  const viewBox = q.viewBox || "0 0 300 300";
+  const selectMode = q.selectMode || "single";
+  const selectedIds = new Set(selectMode === "multi" ? savedAnswer || [] : savedAnswer !== undefined ? [savedAnswer] : []);
+  const bgHtml = (q.background || []).map(renderBackgroundElementHtml).join("");
+  const shapesHtml = q.regions
+    .map((r) => {
+      const selected = selectedIds.has(r.id) ? "selected" : "";
+      const label = escapeHtml(r.label || r.id);
+      if (r.shape === "polygon") {
+        const pts = r.points.map((p) => `${p.x},${p.y}`).join(" ");
+        return `<polygon points="${pts}" class="click-region-shape click-region-polygon ${selected}" data-region-id="${r.id}" tabindex="0" role="button" aria-label="${label}" />`;
+      }
+      const hitR = r.hitR || Math.max(r.r + 8, 16);
+      return `<g class="click-region-circle-group" data-region-id="${r.id}">
+        <circle cx="${r.cx}" cy="${r.cy}" r="${r.r}" class="click-region-shape click-region-dot ${selected}" />
+        <circle cx="${r.cx}" cy="${r.cy}" r="${hitR}" class="click-region-hit" data-region-id="${r.id}" pointer-events="all" tabindex="0" role="button" aria-label="${label}" />
+      </g>`;
+    })
+    .join("");
+  const labelsHtml = q.regions
+    .filter((r) => r.labelPos)
+    .map((r) => `<text x="${r.labelPos.x}" y="${r.labelPos.y}" class="click-region-point-label" pointer-events="none">${escapeHtml(r.label || r.id)}</text>`)
+    .join("");
+  const hint = q.selectHint || (selectMode === "multi" ? "Tap the regions to select them" : "Tap a region to select it");
+  const statusText =
+    selectedIds.size === 0
+      ? hint
+      : `Selected: ${[...selectedIds].map((id) => clickRegionLabel(q, id)).join(", ")}`;
+
+  return `
+    <div class="click-region-wrap">
+      <svg viewBox="${viewBox}" class="click-region-svg" id="click-region-svg">
+        ${bgHtml}
+        ${shapesHtml}
+        ${labelsHtml}
+      </svg>
+      <div class="click-region-status" id="click-region-status">${escapeHtml(statusText)}</div>
+      ${selectMode === "multi" ? `<div class="click-region-hint-row"><button class="btn secondary small" id="click-region-clear" type="button">Clear my selection</button></div>` : ""}
+    </div>
+  `;
+}
+
+function setupClickRegion(q, savedAnswer) {
+  const svg = document.getElementById("click-region-svg");
+  const status = document.getElementById("click-region-status");
+  const selectMode = q.selectMode || "single";
+  const hint = q.selectHint || (selectMode === "multi" ? "Tap the regions to select them" : "Tap a region to select it");
+
+  function shapeElFor(id) {
+    const r = q.regions.find((x) => x.id === id);
+    if (!r) return null;
+    return r.shape === "polygon"
+      ? svg.querySelector(`.click-region-polygon[data-region-id="${id}"]`)
+      : svg.querySelector(`g.click-region-circle-group[data-region-id="${id}"] .click-region-dot`);
+  }
+
+  function paint(selectedIds) {
+    q.regions.forEach((r) => {
+      const shapeEl = shapeElFor(r.id);
+      if (shapeEl) shapeEl.classList.toggle("selected", selectedIds.has(r.id));
+    });
+  }
+
+  const interactiveEls = svg.querySelectorAll(".click-region-polygon, .click-region-hit");
+
+  if (selectMode === "multi") {
+    let current = new Set(savedAnswer || []);
+    function toggle(id) {
+      if (current.has(id)) current.delete(id);
+      else current.add(id);
+      state.answers[q.id] = [...current];
+      paint(current);
+      status.textContent = current.size ? `Selected: ${[...current].map((i) => clickRegionLabel(q, i)).join(", ")}` : hint;
+    }
+    interactiveEls.forEach((el) => {
+      el.addEventListener("click", () => toggle(el.dataset.regionId));
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle(el.dataset.regionId);
+        }
+      });
+    });
+    const clearBtn = document.getElementById("click-region-clear");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        current = new Set();
+        state.answers[q.id] = [];
+        paint(current);
+        status.textContent = hint;
+      });
+    }
+  } else {
+    function select(id) {
+      state.answers[q.id] = id;
+      paint(new Set([id]));
+      status.textContent = `Selected: ${clickRegionLabel(q, id)}`;
+    }
+    interactiveEls.forEach((el) => {
+      el.addEventListener("click", () => select(el.dataset.regionId));
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          select(el.dataset.regionId);
+        }
+      });
+    });
+  }
+
+  interactiveEls.forEach((el) => {
+    const shapeEl = shapeElFor(el.dataset.regionId);
+    if (!shapeEl) return;
+    el.addEventListener("pointerenter", () => shapeEl.classList.add("hovered"));
+    el.addEventListener("pointerleave", () => shapeEl.classList.remove("hovered"));
+    el.addEventListener("focus", () => shapeEl.classList.add("hovered"));
+    el.addEventListener("blur", () => shapeEl.classList.remove("hovered"));
+  });
+}
+
 // A lightweight overlay (not a full screen change) so it can be opened from
 // mid-question without losing her place or resetting the stopwatch. Shows
 // every term for the subject, filtered live by a search box.
@@ -1142,6 +1321,8 @@ function renderQuestion() {
     answerHtml = renderClickSideHtml(q, savedAnswer);
   } else if (q.type === "drag-a-radius") {
     answerHtml = renderDragRadiusHtml(q, savedAnswer);
+  } else if (q.type === "click-a-region") {
+    answerHtml = renderClickRegionHtml(q, savedAnswer);
   } else {
     answerHtml = `<input type="text" class="text-answer" id="short-answer" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your answer" value="${savedAnswer !== undefined ? escapeHtml(savedAnswer) : ""}" />`;
   }
@@ -1179,6 +1360,7 @@ function renderQuestion() {
   if (q.type === "grid-shade") setupGridShade(q, savedAnswer);
   if (q.type === "click-a-side") setupClickSide(q);
   if (q.type === "drag-a-radius") setupDragRadius(q, savedAnswer);
+  if (q.type === "click-a-region") setupClickRegion(q, savedAnswer);
 
   const helpBtn = document.getElementById("help-btn");
   const hintBox = document.getElementById("hint-box");
@@ -1210,6 +1392,10 @@ function renderQuestion() {
       if (q.type === "drag-a-radius") {
         parts.push("Drag the blue handle around the circle until the angle it makes with the fixed grey line matches what's asked for.");
       }
+      if (q.type === "click-a-region") {
+        const modeText = (q.selectMode || "single") === "multi" ? "Tap all the regions on the diagram that answer the question." : "Tap the one region on the diagram that answers the question.";
+        parts.push(modeText);
+      }
       speakText(parts.join(". "));
     });
   }
@@ -1228,9 +1414,10 @@ function renderQuestion() {
   } else if (q.type === "grid-shade") {
     // Tap-to-toggle interaction is already wired up by setupGridShade()
     // above, same reasoning as the numberline branch.
-  } else if (q.type === "click-a-side" || q.type === "drag-a-radius") {
+  } else if (q.type === "click-a-side" || q.type === "drag-a-radius" || q.type === "click-a-region") {
     // Click/drag interaction is already wired up by setupClickSide()/
-    // setupDragRadius() above, same reasoning as the numberline branch.
+    // setupDragRadius()/setupClickRegion() above, same reasoning as the
+    // numberline branch.
   } else {
     const input = document.getElementById("short-answer");
     input.addEventListener("input", () => {

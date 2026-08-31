@@ -720,6 +720,147 @@ input.text-answer:focus { outline: none; border-color: var(--primary); }
   outline-offset: 2px;
 }
 
+/* Click-a-region question type — tap one or more shapes/points on a
+   diagram (congruent-shape matching, a bearings intersection, a scatter
+   outlier). Background elements (map outline, bearing lines, axes) are
+   purely decorative; polygon regions get a faint fill so the whole
+   interior catches clicks, and circle regions get an invisible, larger
+   hit-circle layered on top of the visible dot — same thin-visible/
+   wide-hit-target split as click-a-side's segment lines. */
+.click-region-wrap {
+  margin: 8px 0 20px;
+  text-align: center;
+}
+
+.click-region-svg {
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  margin: 0 auto;
+  touch-action: manipulation;
+}
+
+.click-region-bg-el {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+text.click-region-bg-el {
+  fill: var(--muted);
+  stroke: none;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.click-region-polygon {
+  fill: rgba(42, 120, 214, 0.08);
+  stroke: var(--text);
+  stroke-width: 2;
+  cursor: pointer;
+  transition: fill 0.15s ease, stroke 0.15s ease;
+}
+
+.click-region-polygon.hovered {
+  fill: rgba(42, 120, 214, 0.18);
+}
+
+.click-region-polygon.selected {
+  fill: rgba(42, 120, 214, 0.3);
+  stroke: var(--primary);
+  stroke-width: 3;
+}
+
+.click-region-dot {
+  fill: var(--text);
+  stroke: var(--card-bg);
+  stroke-width: 1.5;
+  transition: fill 0.15s ease, r 0.15s ease;
+}
+
+.click-region-dot.hovered {
+  fill: var(--primary-dark);
+}
+
+.click-region-dot.selected {
+  fill: var(--primary);
+  stroke-width: 2;
+}
+
+.click-region-hit {
+  fill: transparent;
+  stroke: none;
+  cursor: pointer;
+}
+
+.click-region-polygon:focus,
+.click-region-hit:focus {
+  outline: none;
+}
+
+.click-region-point-label {
+  font-size: 11px;
+  fill: var(--muted);
+  font-weight: 700;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.click-region-status {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.click-region-hint-row {
+  margin-top: 10px;
+}
+
+/* Decorative background-element classes used by specific click-a-region
+   questions (see the `className` on each background element). */
+.click-region-reference {
+  fill: rgba(0, 0, 0, 0.04);
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-dasharray: 4, 3;
+}
+
+text.click-region-reference-label {
+  fill: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.click-region-north {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+text.click-region-map-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.click-region-place-dot {
+  fill: var(--text);
+  stroke: none;
+}
+
+.click-region-bearing {
+  stroke: var(--primary);
+  stroke-width: 1.5;
+  opacity: 0.65;
+}
+
+.click-region-axis {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
 .nav-row {
   display: flex;
   gap: 10px;
