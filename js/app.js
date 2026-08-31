@@ -1,4 +1,4 @@
-import { SUBJECTS, buildSession, hasDoneDailyToday, flattenAnswers, computeTopicLevel, GRADES } from "./subjects.js";
+import { SUBJECTS, buildSession, hasDoneDailyToday, flattenAnswers, computeTopicLevel, GRADES, getAvailablePapers, pickExamPaper } from "./subjects.js";
 import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles, getProfileSettings, setProfileSettings } from "./storage.js";
 import { isCorrect, correctAnswerDisplay, userAnswerDisplay, optionLabel, classifyAngleDeg } from "./marking.js";
 import { Stopwatch, formatTime } from "./timer.js";
@@ -7,6 +7,25 @@ import { GLOSSARY } from "../data/glossary.js";
 import { ASSESSOR_PIN } from "../firebase-config.js";
 
 const WEAK_STREAK_THRESHOLD = 3;
+
+// ---------- exam mode: Saturday rotation ----------
+//
+// A 4-week rotation starting the first Saturday of October each year: week 1
+// = Maths, week 2 = Science, week 3 = English, week 4 = a rest week (no exam
+// offered at all). Only ever offered on a Saturday, and only from the
+// rotation's start date onward — every other day, and every Saturday before
+// it starts, offers nothing. One shared calendar (not per-profile).
+const EXAM_ROTATION_START = new Date(2026, 9, 3); // 3 Oct 2026 — first Saturday of October 2026
+const EXAM_ROTATION_SUBJECTS = ["maths", "science", "english", null]; // null = rest week
+
+function examRotationSubjectFor(date) {
+  if (date.getDay() !== 6) return null; // Saturdays only (0 = Sunday ... 6 = Saturday)
+  const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (dayStart < EXAM_ROTATION_START) return null;
+  const daysSince = Math.round((dayStart - EXAM_ROTATION_START) / 86400000);
+  const weekIndex = Math.floor(daysSince / 7) % EXAM_ROTATION_SUBJECTS.length;
+  return EXAM_ROTATION_SUBJECTS[weekIndex];
+}
 
 const main = document.getElementById("main");
 const profilePill = document.getElementById("profile-pill");
@@ -37,6 +56,13 @@ const state = {
   session: null, // { mode, topicId, title, questions }
   qIndex: 0,
   answers: {},
+  // Per-question "did she use this?" flags for the current session, keyed by
+  // question id — surfaced to the parent/assessor view (see finishSession()
+  // and renderAssessorProfile()) so a parent can see which answers had help,
+  // not just which were right or wrong. Reset alongside state.answers at the
+  // start of every session (startSession()).
+  helpUsed: {},
+  audioUsed: {},
   stopwatch: null,
 };
 
@@ -1160,6 +1186,17 @@ async function renderHome() {
     })
     .join("");
 
+  const examSubjectKey = examRotationSubjectFor(new Date());
+  const examBannerHtml = examSubjectKey
+    ? `
+      <div class="card" id="exam-banner" style="border:2px solid ${SUBJECT_COLOR[examSubjectKey]};">
+        <strong>📝 This week's exam: ${escapeHtml(SUBJECTS[examSubjectKey].name)}</strong>
+        <div style="color:var(--muted); font-size:0.85rem; margin-top:2px;">A full, timed real past paper — no hints, no read-aloud, just like the real thing.</div>
+        <button class="btn block" id="exam-start-btn" style="margin-top:12px;">Start this week's exam</button>
+      </div>
+    `
+    : "";
+
   main.innerHTML = `
     <div class="card">
       <div>
@@ -1168,6 +1205,7 @@ async function renderHome() {
       </div>
       <div class="subject-grid">${subjectCards}</div>
     </div>
+    ${examBannerHtml}
     ${buildCalendarHtml(results)}
     <button class="btn secondary" id="dashboard-btn">📈 View progress dashboard</button>
     <div class="assessor-link" id="assessor-link">🔍 Assessor / parent view</div>
@@ -1178,6 +1216,8 @@ async function renderHome() {
   });
   document.getElementById("assessor-link").addEventListener("click", openAssessorView);
   document.getElementById("dashboard-btn").addEventListener("click", () => renderDashboard());
+  const examStartBtn = document.getElementById("exam-start-btn");
+  if (examStartBtn) examStartBtn.addEventListener("click", () => startExam(examSubjectKey));
 }
 
 // ---------- SUBJECT (mixed CTA + topic picker) ----------
@@ -1266,10 +1306,32 @@ async function startSession(subjectKey, { mode, topicId }) {
     return;
   }
   const session = buildSession(subjectKey, { mode, topicId }, priorResults);
+  beginSession(subjectKey, session);
+}
+
+// Picks which real paper is due (pickExamPaper — least-recently-sat first),
+// builds the whole-paper session, and starts it running against a countdown
+// instead of the normal count-up clock. No daily-done gate here — exam mode
+// is independent of daily/topic practice.
+async function startExam(subjectKey) {
+  const priorResults = await getResults({ profile: state.profile, subject: subjectKey });
+  const paper = pickExamPaper(subjectKey, priorResults);
+  if (!paper) {
+    renderHome();
+    return;
+  }
+  const session = buildSession(subjectKey, { mode: "exam", paperKey: paper.key }, priorResults);
+  beginSession(subjectKey, session);
+}
+
+function beginSession(subjectKey, session) {
   state.subjectKey = subjectKey;
   state.session = session;
   state.qIndex = 0;
   state.answers = {};
+  state.helpUsed = {};
+  state.audioUsed = {};
+  state.examFinishing = false;
   if (state.stopwatch) state.stopwatch.stop();
   state.stopwatch = new Stopwatch({ onTick: updateClock });
   renderQuestion();
@@ -1278,7 +1340,66 @@ async function startSession(subjectKey, { mode, topicId }) {
 
 function updateClock(elapsed) {
   const clockEl = document.getElementById("clock");
-  if (clockEl) clockEl.textContent = formatTime(elapsed);
+  if (!clockEl) return;
+  const session = state.session;
+  if (session && session.mode === "exam") {
+    const totalSeconds = session.timeAllowedMinutes * 60;
+    const remaining = totalSeconds - elapsed;
+    clockEl.textContent = formatTime(Math.max(remaining, 0));
+    // Reuses the existing (already-styled, previously-unused) .low class —
+    // style.css already has a rule for it (.timer-bar .clock.low), just
+    // nothing in app.js ever toggled it before exam mode existed.
+    clockEl.classList.toggle("low", remaining <= 300 && remaining > 0); // last 5 minutes
+    // Auto-submit the moment time runs out. Guarded by state.examFinishing
+    // so this fires exactly once — onTick keeps calling after remaining
+    // drops below zero (the stopwatch itself doesn't stop on its own), and
+    // finishSession() is async, so without the guard every tick before it
+    // resolves would kick off another finishSession() call.
+    if (remaining <= 0 && !state.examFinishing) {
+      state.examFinishing = true;
+      finishSession({ timedOut: true });
+    }
+  } else {
+    clockEl.textContent = formatTime(elapsed);
+  }
+}
+
+// Same same-page-modal pattern as showProfileNameModal()/showAssessorPinModal()
+// — used here to confirm ending an exam early, rather than window.confirm(),
+// which iOS Safari can silently and permanently suppress after one accidental
+// dismissal, with no way for the page to detect it.
+function showConfirmModal(title, message, confirmLabel) {
+  return new Promise((resolve) => {
+    const existing = document.getElementById("confirm-modal-overlay");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.id = "confirm-modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-header">
+          <strong>${escapeHtml(title)}</strong>
+          <button class="modal-close" id="confirm-modal-close" aria-label="Close">✕</button>
+        </div>
+        <p style="margin-top:0;">${escapeHtml(message)}</p>
+        <button class="btn block" id="confirm-modal-confirm">${escapeHtml(confirmLabel)}</button>
+        <button class="btn secondary block" id="confirm-modal-cancel" style="margin-top:8px;">Cancel</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const close = (result) => {
+      overlay.remove();
+      resolve(result);
+    };
+    document.getElementById("confirm-modal-close").addEventListener("click", () => close(false));
+    document.getElementById("confirm-modal-cancel").addEventListener("click", () => close(false));
+    document.getElementById("confirm-modal-confirm").addEventListener("click", () => close(true));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close(false);
+    });
+  });
 }
 
 function renderQuestion() {
@@ -1329,10 +1450,28 @@ function renderQuestion() {
 
   const isLast = state.qIndex === total - 1;
 
+  // Exam mode simulates sitting the real paper: no hints, no read-aloud, no
+  // glossary lookup — none of those exist in a real exam hall. The
+  // calculator is the one exception, and even that's gated by whether THIS
+  // specific paper actually allows one — every Maths past paper's own
+  // `source.paper` label already says "Calculator-Allowed" or
+  // "Non-Calculator", so that's checked directly rather than assuming every
+  // Maths paper allows one the way normal practice mode does.
+  const isExam = session.mode === "exam";
+  const paperIsNonCalculator = !!(q.source && q.source.paper && q.source.paper.includes("Non-Calculator"));
+  const showCalcBtn = state.subjectKey === "maths" && !(isExam && paperIsNonCalculator);
+  const helpRowButtons = [
+    !isExam ? `<button class="btn secondary small" id="help-btn" type="button">🤔 Need help?</button>` : "",
+    !isExam ? `<button class="btn secondary small" id="glossary-btn" type="button">📖 Key words</button>` : "",
+    showCalcBtn ? `<button class="btn secondary small" id="calc-btn" type="button">🧮 Calculator</button>` : "",
+    !isExam && state.profileSettings && state.profileSettings.audioHelp ? `<button class="btn secondary small" id="read-aloud-btn" type="button">🔊 Read aloud</button>` : ""
+  ].join("");
+  const timerLabel = isExam ? "⏳ Time left" : "⏱";
+
   main.innerHTML = `
     <div class="timer-bar">
-      <div>⏱ <span class="clock" id="clock">0:00</span></div>
-      <div style="color:var(--muted); font-size:0.85rem;">${escapeHtml(q.topicTitle || session.title)}</div>
+      <div>${timerLabel} <span class="clock" id="clock">0:00</span></div>
+      <div style="color:var(--muted); font-size:0.85rem;">${isExam ? "Exam: " : ""}${escapeHtml(q.topicTitle || session.title)}</div>
     </div>
     <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
     <div class="question-number-row">
@@ -1342,17 +1481,13 @@ function renderQuestion() {
     ${passageHtml}
     ${chartHtml}
     <p class="question-prompt">${escapeHtml(q.prompt)}</p>
-    <div class="help-row">
-      <button class="btn secondary small" id="help-btn" type="button">🤔 Need help?</button>
-      <button class="btn secondary small" id="glossary-btn" type="button">📖 Key words</button>
-      ${state.subjectKey === "maths" ? `<button class="btn secondary small" id="calc-btn" type="button">🧮 Calculator</button>` : ""}
-      ${state.profileSettings && state.profileSettings.audioHelp ? `<button class="btn secondary small" id="read-aloud-btn" type="button">🔊 Read aloud</button>` : ""}
-    </div>
-    <div class="hint-box" id="hint-box" hidden>${escapeHtml(hintText)}</div>
+    ${helpRowButtons ? `<div class="help-row">${helpRowButtons}</div>` : ""}
+    ${!isExam ? `<div class="hint-box" id="hint-box" hidden>${escapeHtml(hintText)}</div>` : ""}
     ${answerHtml}
     <div class="nav-row">
       <button class="btn" id="next-btn">${isLast ? "Finish" : "Next question"}</button>
     </div>
+    ${isExam ? `<button class="btn secondary block" id="finish-exam-btn" type="button" style="margin-top:10px;">🏁 Finish exam now</button>` : ""}
   `;
   updateClock(state.stopwatch.elapsed);
   if (q.chart) renderChartCanvas("question-chart", state.subjectKey, q.chart);
@@ -1362,18 +1497,40 @@ function renderQuestion() {
   if (q.type === "drag-a-radius") setupDragRadius(q, savedAnswer);
   if (q.type === "click-a-region") setupClickRegion(q, savedAnswer);
 
+  // help-btn/hint-box/glossary-btn don't exist during exam mode (see
+  // helpRowButtons above), so these are all null-guarded rather than assumed
+  // present the way they always were before exam mode existed.
   const helpBtn = document.getElementById("help-btn");
   const hintBox = document.getElementById("hint-box");
-  helpBtn.addEventListener("click", () => {
-    hintBox.hidden = !hintBox.hidden;
-    helpBtn.textContent = hintBox.hidden ? "🤔 Need help?" : "🙈 Hide hint";
-  });
-  document.getElementById("glossary-btn").addEventListener("click", () => showGlossaryModal(state.subjectKey));
+  if (helpBtn && hintBox) {
+    helpBtn.addEventListener("click", () => {
+      hintBox.hidden = !hintBox.hidden;
+      helpBtn.textContent = hintBox.hidden ? "🤔 Need help?" : "🙈 Hide hint";
+      // Recorded the moment she opens it, never cleared even if she closes it
+      // again — the parent-facing question is "did she need a hint on this
+      // one", not "is the hint currently showing".
+      if (!hintBox.hidden) state.helpUsed[q.id] = true;
+    });
+  }
+  const glossaryBtn = document.getElementById("glossary-btn");
+  if (glossaryBtn) glossaryBtn.addEventListener("click", () => showGlossaryModal(state.subjectKey));
   const calcBtn = document.getElementById("calc-btn");
   if (calcBtn) calcBtn.addEventListener("click", showCalculatorModal);
+  const finishExamBtn = document.getElementById("finish-exam-btn");
+  if (finishExamBtn) {
+    finishExamBtn.addEventListener("click", async () => {
+      const unanswered = session.questions.filter((sq) => state.answers[sq.id] === undefined).length;
+      const message = unanswered
+        ? `You still have ${unanswered} question${unanswered === 1 ? "" : "s"} unanswered — those will be marked wrong. Finish the exam now?`
+        : "Finish the exam now?";
+      const confirmed = await showConfirmModal("Finish exam", message, "Yes, finish now");
+      if (confirmed) finishSession();
+    });
+  }
   const readAloudBtn = document.getElementById("read-aloud-btn");
   if (readAloudBtn) {
     readAloudBtn.addEventListener("click", () => {
+      state.audioUsed[q.id] = true;
       const parts = [];
       if (q.passage) parts.push(q.passage);
       parts.push(q.prompt);
@@ -1439,7 +1596,10 @@ function renderQuestion() {
   });
 }
 
-async function finishSession() {
+// timedOut is only ever true when the exam countdown itself calls this (see
+// updateClock()) — every other path (the normal "Finish" button, and the
+// exam-mode "Finish exam now" button) means she ended it herself.
+async function finishSession({ timedOut = false } = {}) {
   const durationSeconds = state.stopwatch ? state.stopwatch.stop() : 0;
   const session = state.session;
 
@@ -1463,6 +1623,12 @@ async function finishSession() {
       // rejects undefined field values, and this object gets persisted
       // as part of the session record below.
       userAnswerRaw: (q.type === "numberline" || q.type === "drag-a-radius") && userAnswer !== undefined ? userAnswer : null,
+      // Whether she opened the hint box or used read-aloud on this specific
+      // question — surfaced as a small icon per question in the assessor
+      // view, and rolled up into a per-subject "% of questions using help"
+      // stat there too. Plain booleans (never undefined) — Firestore-safe.
+      usedHint: !!state.helpUsed[q.id],
+      usedAudio: !!state.audioUsed[q.id],
     };
   });
   const score = details.filter((d) => d.correct).length;
@@ -1470,7 +1636,13 @@ async function finishSession() {
   const percentage = Math.round((score / total) * 100);
 
   const priorResults = await getResults({ profile: state.profile, subject: state.subjectKey });
-  const priorMatching = priorResults.filter((r) => r.mode === session.mode && r.topicId === session.topicId);
+  // Exam mode's "previous attempts" comparison is scoped to the SAME real
+  // paper (paperKey), not just the same mode — otherwise sitting Science
+  // Unit 5 would get compared against a completely different paper (Unit 2)
+  // just because both happen to be "exam" mode sessions.
+  const priorMatching = priorResults.filter((r) =>
+    r.mode === session.mode && (session.mode === "exam" ? r.paperKey === session.paperKey : r.topicId === session.topicId)
+  );
   const previousBest = priorMatching.length ? Math.max(...priorMatching.map((r) => r.percentage)) : null;
   const previousLast = priorMatching.length ? priorMatching[priorMatching.length - 1].percentage : null;
 
@@ -1479,6 +1651,12 @@ async function finishSession() {
     subject: state.subjectKey,
     mode: session.mode,
     topicId: session.topicId,
+    // null (not undefined — Firestore-safe, same convention as every other
+    // optional field here) outside exam mode, where there's no single real
+    // paper to identify a session by.
+    paperKey: session.paperKey || null,
+    timeAllowedMinutes: session.timeAllowedMinutes || null,
+    timedOut,
     sessionTitle: session.title,
     score,
     total,
@@ -1490,7 +1668,7 @@ async function finishSession() {
     // in the assessor view, or if this question ever changes or is removed
     // from the data files down the line — without needing to re-look it up
     // from live content.
-    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart, numberline, userAnswerRaw }) => ({
+    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart, numberline, userAnswerRaw, usedHint, usedAudio }) => ({
       questionId,
       topicId,
       topicTitle,
@@ -1504,6 +1682,8 @@ async function finishSession() {
       chart,
       numberline,
       userAnswerRaw,
+      usedHint,
+      usedAudio,
     })),
   };
 
@@ -1592,11 +1772,16 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
     )
     .join("");
 
+  const isExamResult = record.mode === "exam";
+  const timeSummary = isExamResult
+    ? `⏱ ${record.timedOut ? "Time ran out at" : "Finished in"} ${formatTime(record.durationSeconds)}${record.timeAllowedMinutes ? ` (${record.timeAllowedMinutes} min allowed)` : ""}`
+    : `⏱ Completed in ${formatTime(record.durationSeconds)}`;
+
   main.innerHTML = `
     <div class="card score-hero">
       <div class="big">${record.percentage}%</div>
       <div class="sub">${record.score} out of ${record.total} correct — ${escapeHtml(record.sessionTitle)}</div>
-      <div style="color:var(--muted); margin-top:4px;">⏱ Completed in ${formatTime(record.durationSeconds)}</div>
+      <div style="color:var(--muted); margin-top:4px;">${timeSummary}</div>
       ${improvementHtml}
     </div>
     ${levelUpHtml}
@@ -1606,7 +1791,7 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
       ${items}
     </div>
     <div class="nav-row">
-      <button class="btn secondary" id="retry-btn">Do 5 more like this</button>
+      ${isExamResult ? "" : `<button class="btn secondary" id="retry-btn">Do 5 more like this</button>`}
       <button class="btn" id="subject-btn">Back to ${escapeHtml(SUBJECTS[state.subjectKey].name)}</button>
     </div>
   `;
@@ -1615,7 +1800,8 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
     if (!d.correct && d.chart) renderChartCanvas(`result-chart-${i}`, record.subject, d.chart);
   });
 
-  document.getElementById("retry-btn").addEventListener("click", () => startSession(state.subjectKey, { mode: record.mode, topicId: record.topicId }));
+  const retryBtn = document.getElementById("retry-btn");
+  if (retryBtn) retryBtn.addEventListener("click", () => startSession(state.subjectKey, { mode: record.mode, topicId: record.topicId }));
   document.getElementById("subject-btn").addEventListener("click", () => renderSubject(state.subjectKey));
   const weakBtn = document.getElementById("practice-weak-btn");
   if (weakBtn) {
@@ -1781,6 +1967,46 @@ async function renderAssessorProfile(profileName) {
     `
     : "";
 
+  // How much she's leaning on the hint button / read-aloud, per subject —
+  // computed straight off each session's own recorded answers (usedHint/
+  // usedAudio, set in finishSession()) rather than via flattenAnswers(),
+  // since that helper's field set is defined in subjects.js and isn't
+  // guaranteed to pass these two booleans through. Older sessions recorded
+  // before this feature existed simply have no usedHint/usedAudio on their
+  // answers, which reads as "not used" here — an honest default, not a
+  // guess, since help wasn't tracked at all before now.
+  const helpAudioBySubject = Object.values(SUBJECTS)
+    .map((subject) => {
+      const subjectResults = chronological.filter((r) => r.subject === subject.key);
+      const allAnswers = subjectResults.flatMap((r) => r.answers || []);
+      const total = allAnswers.length;
+      const usedHintCount = allAnswers.filter((a) => a.usedHint).length;
+      const usedAudioCount = allAnswers.filter((a) => a.usedAudio).length;
+      const usedEitherCount = allAnswers.filter((a) => a.usedHint || a.usedAudio).length;
+      return { subject, total, usedHintCount, usedAudioCount, usedEitherCount };
+    })
+    .filter((s) => s.total > 0);
+
+  const helpSummaryHtml = helpAudioBySubject.length
+    ? `
+      <div class="card">
+        <h3 style="margin-top:0;">Help &amp; audio use</h3>
+        <div style="color:var(--muted); font-size:0.85rem; margin-top:-6px; margin-bottom:10px;">Share of questions where she opened the hint (🤔) or used read-aloud (🔊) at least once.</div>
+        ${helpAudioBySubject
+          .map((s) => {
+            const pct = Math.round((s.usedEitherCount / s.total) * 100);
+            return `
+          <div style="margin-bottom:8px;">
+            <div style="font-weight:700; color:${SUBJECT_COLOR[s.subject.key]};">${escapeHtml(s.subject.name)}</div>
+            <div style="font-size:0.9rem; margin-left:4px;">${pct}% of ${s.total} questions — 🤔 ${s.usedHintCount} &middot; 🔊 ${s.usedAudioCount}</div>
+          </div>
+        `;
+          })
+          .join("")}
+      </div>
+    `
+    : "";
+
   const sessionRows = results
     .map((r, i) => {
       const date = new Date(r.timestamp).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -1801,7 +2027,9 @@ async function renderAssessorProfile(profileName) {
               <div class="result-item ${a.correct ? "correct" : "incorrect"}">
                 <div class="tag">${a.correct ? "Correct" : "Incorrect"} · ${escapeHtml(a.topicTitle || "")} ${
                   a.grade ? `<span class="grade-badge grade-${a.grade}">${a.grade}</span>` : ""
-                } ${a.source ? `<span class="paper-badge">${escapeHtml(a.source.code)} paper</span>` : ""}</div>
+                } ${a.source ? `<span class="paper-badge">${escapeHtml(a.source.code)} paper</span>` : ""}${
+                  a.usedHint ? `<span class="help-badge" title="Used the hint">🤔</span>` : ""
+                }${a.usedAudio ? `<span class="help-badge" title="Used read-aloud">🔊</span>` : ""}</div>
                 <div style="font-weight:600; margin-top:4px;">${escapeHtml(a.prompt || "(question text not recorded for this older session)")}</div>
                 ${a.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="assessor-chart-${i}-${j}"></canvas></div>` : ""}
                 ${a.numberline ? renderNumberLineReviewHtml(a.numberline, a.userAnswerRaw, a.correct) : ""}
@@ -1826,6 +2054,7 @@ async function renderAssessorProfile(profileName) {
       <div style="color:var(--muted); font-size:0.88rem; margin-top:-8px;">${results.length} session${results.length === 1 ? "" : "s"} recorded — tap one to see every question and answer.</div>
     </div>
     ${weakSummaryHtml}
+    ${helpSummaryHtml}
     ${sessionRows || `<div class="empty-state">No sessions yet.</div>`}
   `;
 
