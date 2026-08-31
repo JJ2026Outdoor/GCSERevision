@@ -379,7 +379,13 @@ function snapNumberLine(value, min, step) {
   return Math.round(snapped * 1e9) / 1e9;
 }
 
-function renderNumberLineHtml(nl, savedAnswer) {
+// idSuffix defaults to "" (unchanged ids, e.g. "nl-track") so every existing
+// caller — the single-question-per-screen renderQuestion(), used by daily/
+// topic mode — keeps working exactly as before. Exam mode renders every
+// question on one continuous page at once, so it passes a per-question
+// suffix (e.g. "-3") to keep each question's ids unique on the page; the
+// interactive logic itself (drag/keyboard handling) is unchanged either way.
+function renderNumberLineHtml(nl, savedAnswer, idSuffix = "") {
   const initial = savedAnswer !== undefined ? savedAnswer : (nl.min + nl.max) / 2;
   const ticks = nl.ticks && nl.ticks.length ? nl.ticks : [{ value: nl.min, label: String(nl.min) }, { value: nl.max, label: String(nl.max) }];
   const ticksHtml = ticks
@@ -390,22 +396,22 @@ function renderNumberLineHtml(nl, savedAnswer) {
     .join("");
   return `
     <div class="numberline-wrap">
-      <div class="numberline-value" id="nl-value">${savedAnswer !== undefined ? escapeHtml(`${savedAnswer}${nl.unitLabel ? " " + nl.unitLabel : ""}`) : "Drag the marker onto the line"}</div>
-      <div class="numberline-track" id="nl-track">
-        <div class="numberline-fill" id="nl-fill"></div>
+      <div class="numberline-value" id="nl-value${idSuffix}">${savedAnswer !== undefined ? escapeHtml(`${savedAnswer}${nl.unitLabel ? " " + nl.unitLabel : ""}`) : "Drag the marker onto the line"}</div>
+      <div class="numberline-track" id="nl-track${idSuffix}">
+        <div class="numberline-fill" id="nl-fill${idSuffix}"></div>
         ${ticksHtml}
-        <div class="numberline-marker" id="nl-marker" tabindex="0" role="slider" aria-valuemin="${nl.min}" aria-valuemax="${nl.max}" aria-valuenow="${initial}" aria-label="Answer position on the number line"></div>
+        <div class="numberline-marker" id="nl-marker${idSuffix}" tabindex="0" role="slider" aria-valuemin="${nl.min}" aria-valuemax="${nl.max}" aria-valuenow="${initial}" aria-label="Answer position on the number line"></div>
       </div>
     </div>
   `;
 }
 
-function setupNumberLine(q, savedAnswer) {
+function setupNumberLine(q, savedAnswer, idSuffix = "") {
   const nl = q.numberline;
-  const track = document.getElementById("nl-track");
-  const marker = document.getElementById("nl-marker");
-  const fill = document.getElementById("nl-fill");
-  const valueLabel = document.getElementById("nl-value");
+  const track = document.getElementById(`nl-track${idSuffix}`);
+  const marker = document.getElementById(`nl-marker${idSuffix}`);
+  const fill = document.getElementById(`nl-fill${idSuffix}`);
+  const valueLabel = document.getElementById(`nl-value${idSuffix}`);
   const hasAnswer = savedAnswer !== undefined;
   let value = hasAnswer ? savedAnswer : (nl.min + nl.max) / 2;
 
@@ -524,7 +530,8 @@ function renderNumberLineReviewHtml(nl, userValue, wasCorrect) {
 // given cells are drawn as shaded from the start, but that's a starting
 // position, not an answer, so an untouched question still correctly
 // counts as unanswered.
-function renderGridShadeHtml(q, savedAnswer) {
+// idSuffix — see the comment above renderNumberLineHtml(); same reasoning.
+function renderGridShadeHtml(q, savedAnswer, idSuffix = "") {
   const total = q.rows * q.cols;
   const given = q.givenShaded || [];
   const shaded = new Set(savedAnswer || given);
@@ -536,19 +543,19 @@ function renderGridShadeHtml(q, savedAnswer) {
   }).join("");
   return `
     <div class="grid-shade-wrap">
-      <div class="grid-shade" id="grid-shade" style="grid-template-columns: repeat(${q.cols}, 1fr);">
+      <div class="grid-shade" id="grid-shade${idSuffix}" style="grid-template-columns: repeat(${q.cols}, 1fr);">
         ${cellsHtml}
       </div>
       <div class="grid-shade-hint-row">
-        <button class="btn secondary small" id="grid-shade-clear" type="button">Clear my shading</button>
+        <button class="btn secondary small" id="grid-shade-clear${idSuffix}" type="button">Clear my shading</button>
       </div>
     </div>
   `;
 }
 
-function setupGridShade(q, savedAnswer) {
-  const grid = document.getElementById("grid-shade");
-  const clearBtn = document.getElementById("grid-shade-clear");
+function setupGridShade(q, savedAnswer, idSuffix = "") {
+  const grid = document.getElementById(`grid-shade${idSuffix}`);
+  const clearBtn = document.getElementById(`grid-shade-clear${idSuffix}`);
   const given = q.givenShaded || [];
 
   grid.querySelectorAll(".grid-shade-cell").forEach((cell) => {
@@ -857,7 +864,8 @@ function clickRegionLabel(q, id) {
   return r ? r.label || r.id : id;
 }
 
-function renderClickRegionHtml(q, savedAnswer) {
+// idSuffix — see the comment above renderNumberLineHtml(); same reasoning.
+function renderClickRegionHtml(q, savedAnswer, idSuffix = "") {
   const viewBox = q.viewBox || "0 0 300 300";
   const selectMode = q.selectMode || "single";
   const selectedIds = new Set(selectMode === "multi" ? savedAnswer || [] : savedAnswer !== undefined ? [savedAnswer] : []);
@@ -889,20 +897,20 @@ function renderClickRegionHtml(q, savedAnswer) {
 
   return `
     <div class="click-region-wrap">
-      <svg viewBox="${viewBox}" class="click-region-svg" id="click-region-svg">
+      <svg viewBox="${viewBox}" class="click-region-svg" id="click-region-svg${idSuffix}">
         ${bgHtml}
         ${shapesHtml}
         ${labelsHtml}
       </svg>
-      <div class="click-region-status" id="click-region-status">${escapeHtml(statusText)}</div>
-      ${selectMode === "multi" ? `<div class="click-region-hint-row"><button class="btn secondary small" id="click-region-clear" type="button">Clear my selection</button></div>` : ""}
+      <div class="click-region-status" id="click-region-status${idSuffix}">${escapeHtml(statusText)}</div>
+      ${selectMode === "multi" ? `<div class="click-region-hint-row"><button class="btn secondary small" id="click-region-clear${idSuffix}" type="button">Clear my selection</button></div>` : ""}
     </div>
   `;
 }
 
-function setupClickRegion(q, savedAnswer) {
-  const svg = document.getElementById("click-region-svg");
-  const status = document.getElementById("click-region-status");
+function setupClickRegion(q, savedAnswer, idSuffix = "") {
+  const svg = document.getElementById(`click-region-svg${idSuffix}`);
+  const status = document.getElementById(`click-region-status${idSuffix}`);
   const selectMode = q.selectMode || "single";
   const hint = q.selectHint || (selectMode === "multi" ? "Tap the regions to select them" : "Tap a region to select it");
 
@@ -941,7 +949,7 @@ function setupClickRegion(q, savedAnswer) {
         }
       });
     });
-    const clearBtn = document.getElementById("click-region-clear");
+    const clearBtn = document.getElementById(`click-region-clear${idSuffix}`);
     if (clearBtn) {
       clearBtn.addEventListener("click", () => {
         current = new Set();
@@ -1364,7 +1372,14 @@ function beginSession(subjectKey, session) {
   state.examFinishing = false;
   if (state.stopwatch) state.stopwatch.stop();
   state.stopwatch = new Stopwatch({ onTick: updateClock });
-  renderQuestion();
+  // Exam mode gets its own continuous-scroll renderer (the whole paper at
+  // once, front cover to finish button); daily/topic mode keeps the
+  // original one-question-per-screen flow.
+  if (session.mode === "exam") {
+    renderExamPaper();
+  } else {
+    renderQuestion();
+  }
   state.stopwatch.start();
 }
 
@@ -1432,6 +1447,11 @@ function showConfirmModal(title, message, confirmLabel) {
   });
 }
 
+// Only ever used for daily/topic mode — one question per screen, with a
+// Next/Finish button to advance. Exam mode has its own renderer,
+// renderExamPaper() (below), which lays out the whole paper as one
+// continuous scroll instead; see beginSession() for the dispatch between
+// the two.
 function renderQuestion() {
   destroyActiveCharts();
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
@@ -1479,29 +1499,18 @@ function renderQuestion() {
   }
 
   const isLast = state.qIndex === total - 1;
-
-  // Exam mode simulates sitting the real paper: no hints, no read-aloud, no
-  // glossary lookup — none of those exist in a real exam hall. The
-  // calculator is the one exception, and even that's gated by whether THIS
-  // specific paper actually allows one — every Maths past paper's own
-  // `source.paper` label already says "Calculator-Allowed" or
-  // "Non-Calculator", so that's checked directly rather than assuming every
-  // Maths paper allows one the way normal practice mode does.
-  const isExam = session.mode === "exam";
-  const paperIsNonCalculator = !!(q.source && q.source.paper && q.source.paper.includes("Non-Calculator"));
-  const showCalcBtn = state.subjectKey === "maths" && !(isExam && paperIsNonCalculator);
+  const showCalcBtn = state.subjectKey === "maths";
   const helpRowButtons = [
-    !isExam ? `<button class="btn secondary small" id="help-btn" type="button">🤔 Need help?</button>` : "",
-    !isExam ? `<button class="btn secondary small" id="glossary-btn" type="button">📖 Key words</button>` : "",
+    `<button class="btn secondary small" id="help-btn" type="button">🤔 Need help?</button>`,
+    `<button class="btn secondary small" id="glossary-btn" type="button">📖 Key words</button>`,
     showCalcBtn ? `<button class="btn secondary small" id="calc-btn" type="button">🧮 Calculator</button>` : "",
-    !isExam && state.profileSettings && state.profileSettings.audioHelp ? `<button class="btn secondary small" id="read-aloud-btn" type="button">🔊 Read aloud</button>` : ""
+    state.profileSettings && state.profileSettings.audioHelp ? `<button class="btn secondary small" id="read-aloud-btn" type="button">🔊 Read aloud</button>` : ""
   ].join("");
-  const timerLabel = isExam ? "⏳ Time left" : "⏱";
 
   main.innerHTML = `
     <div class="timer-bar">
-      <div>${timerLabel} <span class="clock" id="clock">0:00</span></div>
-      <div style="color:var(--muted); font-size:0.85rem;">${isExam ? "Exam: " : ""}${escapeHtml(q.topicTitle || session.title)}</div>
+      <div>⏱ <span class="clock" id="clock">0:00</span></div>
+      <div style="color:var(--muted); font-size:0.85rem;">${escapeHtml(q.topicTitle || session.title)}</div>
     </div>
     <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
     <div class="question-number-row">
@@ -1512,12 +1521,11 @@ function renderQuestion() {
     ${chartHtml}
     <p class="question-prompt">${escapeHtml(q.prompt)}</p>
     ${helpRowButtons ? `<div class="help-row">${helpRowButtons}</div>` : ""}
-    ${!isExam ? `<div class="hint-box" id="hint-box" hidden>${escapeHtml(hintText)}</div>` : ""}
+    <div class="hint-box" id="hint-box" hidden>${escapeHtml(hintText)}</div>
     ${answerHtml}
     <div class="nav-row">
       <button class="btn" id="next-btn">${isLast ? "Finish" : "Next question"}</button>
     </div>
-    ${isExam ? `<button class="btn secondary block" id="finish-exam-btn" type="button" style="margin-top:10px;">🏁 Finish exam now</button>` : ""}
   `;
   updateClock(state.stopwatch.elapsed);
   if (q.chart) renderChartCanvas("question-chart", state.subjectKey, q.chart);
@@ -1527,36 +1535,19 @@ function renderQuestion() {
   if (q.type === "drag-a-radius") setupDragRadius(q, savedAnswer);
   if (q.type === "click-a-region") setupClickRegion(q, savedAnswer);
 
-  // help-btn/hint-box/glossary-btn don't exist during exam mode (see
-  // helpRowButtons above), so these are all null-guarded rather than assumed
-  // present the way they always were before exam mode existed.
   const helpBtn = document.getElementById("help-btn");
   const hintBox = document.getElementById("hint-box");
-  if (helpBtn && hintBox) {
-    helpBtn.addEventListener("click", () => {
-      hintBox.hidden = !hintBox.hidden;
-      helpBtn.textContent = hintBox.hidden ? "🤔 Need help?" : "🙈 Hide hint";
-      // Recorded the moment she opens it, never cleared even if she closes it
-      // again — the parent-facing question is "did she need a hint on this
-      // one", not "is the hint currently showing".
-      if (!hintBox.hidden) state.helpUsed[q.id] = true;
-    });
-  }
-  const glossaryBtn = document.getElementById("glossary-btn");
-  if (glossaryBtn) glossaryBtn.addEventListener("click", () => showGlossaryModal(state.subjectKey));
+  helpBtn.addEventListener("click", () => {
+    hintBox.hidden = !hintBox.hidden;
+    helpBtn.textContent = hintBox.hidden ? "🤔 Need help?" : "🙈 Hide hint";
+    // Recorded the moment she opens it, never cleared even if she closes it
+    // again — the parent-facing question is "did she need a hint on this
+    // one", not "is the hint currently showing".
+    if (!hintBox.hidden) state.helpUsed[q.id] = true;
+  });
+  document.getElementById("glossary-btn").addEventListener("click", () => showGlossaryModal(state.subjectKey));
   const calcBtn = document.getElementById("calc-btn");
   if (calcBtn) calcBtn.addEventListener("click", showCalculatorModal);
-  const finishExamBtn = document.getElementById("finish-exam-btn");
-  if (finishExamBtn) {
-    finishExamBtn.addEventListener("click", async () => {
-      const unanswered = session.questions.filter((sq) => state.answers[sq.id] === undefined).length;
-      const message = unanswered
-        ? `You still have ${unanswered} question${unanswered === 1 ? "" : "s"} unanswered — those will be marked wrong. Finish the exam now?`
-        : "Finish the exam now?";
-      const confirmed = await showConfirmModal("Finish exam", message, "Yes, finish now");
-      if (confirmed) finishSession();
-    });
-  }
   const readAloudBtn = document.getElementById("read-aloud-btn");
   if (readAloudBtn) {
     readAloudBtn.addEventListener("click", () => {
@@ -1623,6 +1614,174 @@ function renderQuestion() {
       state.qIndex += 1;
       renderQuestion();
     }
+  });
+}
+
+// ---------- EXAM PAPER (continuous scroll, all questions on one page) ----------
+//
+// Requested directly, as a follow-up refinement to exam mode: "I want it to
+// look more like an exam — start with a front page of exam paper, and to
+// scroll down to do all the questions, so no need for a next button and the
+// finish exam button will be at the end." Unlike renderQuestion() (one
+// question per screen, used by daily/topic mode), this renders a cover page
+// followed by every question in the paper at once, and there's no per-
+// question navigation — just one "Finish exam" button at the very end.
+//
+// Every interactive question type real past papers actually use — mcq,
+// short, numberline, grid-shade, click-a-region (confirmed against
+// past-papers.js; click-a-side/drag-a-radius are maths.js-only hand-written
+// types that never appear in real past-paper content, so exam mode never
+// needs them) — has to coexist on one page instead of being the only thing
+// on screen, so every element that used to have a fixed id (the numberline
+// track, the grid-shade grid, the click-region SVG, etc.) is now suffixed
+// with "-<question index>" to stay unique across the whole page. That
+// suffixing is handled by the idSuffix parameter added to
+// renderNumberLineHtml()/setupNumberLine(), renderGridShadeHtml()/
+// setupGridShade() and renderClickRegionHtml()/setupClickRegion() —
+// defaulting to "" so renderQuestion() (single question, needs no
+// suffixing) keeps working exactly as it always did.
+function renderExamPaper() {
+  destroyActiveCharts();
+  const session = state.session;
+  const subject = SUBJECTS[state.subjectKey];
+  const total = session.questions.length;
+  const firstSource = session.questions[0] && session.questions[0].source;
+
+  // Calculator is offered once, for the whole paper, in the sticky header —
+  // not per question — mirroring how a real exam calculator is just present
+  // throughout, not something reissued each question. Only ever relevant for
+  // Maths, and gated by whether THIS specific paper allows one at all (every
+  // Maths past paper's own `source.paper` label already says
+  // "Calculator-Allowed" or "Non-Calculator").
+  const paperIsNonCalculator = !!(session.title && session.title.includes("Non-Calculator"));
+  const showCalcBtn = state.subjectKey === "maths" && !paperIsNonCalculator;
+  const calcLine = state.subjectKey === "maths" ? (paperIsNonCalculator ? "No calculator allowed" : "Calculator allowed") : "";
+
+  const coverHtml = `
+    <div class="card exam-cover" style="border:2px solid ${SUBJECT_COLOR[state.subjectKey]};">
+      <div class="exam-cover-board">WJEC GCSE ${escapeHtml(subject.fullName)}</div>
+      <h2 class="exam-cover-title">${escapeHtml(subject.name)} — ${escapeHtml(session.title)}</h2>
+      ${firstSource ? `<div class="exam-cover-source">${escapeHtml(firstSource.label)}</div>` : ""}
+      <div class="exam-cover-meta">
+        <div><strong>Candidate:</strong> ${escapeHtml(state.profile)}</div>
+        <div><strong>Time allowed:</strong> ${session.timeAllowedMinutes} minutes${!session.timeConfirmed ? " (approximate)" : ""}</div>
+        <div><strong>Questions:</strong> ${total}</div>
+        ${calcLine ? `<div><strong>Calculator:</strong> ${calcLine}</div>` : ""}
+      </div>
+      <div class="exam-cover-instructions">
+        <strong>Instructions</strong>
+        <ul>
+          <li>Answer every question — scroll down to work through the whole paper in order.</li>
+          <li>Write or select your answer directly under each question.</li>
+          <li>Keep an eye on the timer at the top of the screen.</li>
+          ${showCalcBtn ? `<li>Use the calculator button at the top of the screen if you need it.</li>` : ""}
+          <li>When you've answered everything, scroll to the very end and tap Finish exam.</li>
+        </ul>
+      </div>
+    </div>
+  `;
+
+  const questionsHtml = session.questions
+    .map((q, i) => {
+      const savedAnswer = state.answers[q.id];
+      const chartHtml = q.chart ? `<div class="chart-wrap"><canvas id="question-chart-${i}"></canvas></div>` : "";
+      const idSuffix = `-${i}`;
+
+      let answerHtml = "";
+      if (q.type === "mcq") {
+        const hasPictureOptions = q.options.some((opt) => typeof opt === "object");
+        answerHtml = `<div class="option-list ${hasPictureOptions ? "option-list-picture" : ""}">${q.options
+          .map((opt, optIndex) => {
+            const selected = savedAnswer === optIndex ? "selected" : "";
+            if (typeof opt === "object") {
+              return `<button class="option-btn option-btn-picture ${selected}" data-index="${optIndex}">
+                <span class="option-picture">${opt.svg}</span>
+                <span class="option-picture-label">${escapeHtml(opt.label)}</span>
+              </button>`;
+            }
+            return `<button class="option-btn ${selected}" data-index="${optIndex}">${escapeHtml(opt)}</button>`;
+          })
+          .join("")}</div>`;
+      } else if (q.type === "numberline") {
+        answerHtml = renderNumberLineHtml(q.numberline, savedAnswer, idSuffix);
+      } else if (q.type === "grid-shade") {
+        answerHtml = renderGridShadeHtml(q, savedAnswer, idSuffix);
+      } else if (q.type === "click-a-region") {
+        answerHtml = renderClickRegionHtml(q, savedAnswer, idSuffix);
+      } else {
+        answerHtml = `<input type="text" class="text-answer" id="short-answer${idSuffix}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your answer" value="${savedAnswer !== undefined ? escapeHtml(savedAnswer) : ""}" />`;
+      }
+
+      return `
+        <div class="card exam-question-block" id="exam-q-${i}">
+          <div class="question-number">Question ${i + 1} of ${total}</div>
+          ${chartHtml}
+          <p class="question-prompt">${escapeHtml(q.prompt)}</p>
+          ${answerHtml}
+        </div>
+      `;
+    })
+    .join("");
+
+  main.innerHTML = `
+    <div class="timer-bar exam-sticky-bar">
+      <div>⏳ Time left <span class="clock" id="clock">0:00</span></div>
+      <div style="color:var(--muted); font-size:0.85rem;">Exam: ${escapeHtml(subject.name)}</div>
+      ${showCalcBtn ? `<button class="btn secondary small" id="calc-btn" type="button">🧮 Calculator</button>` : ""}
+    </div>
+    ${coverHtml}
+    ${questionsHtml}
+    <div class="card exam-finish-section">
+      <button class="btn block" id="finish-exam-btn" type="button">🏁 Finish exam</button>
+    </div>
+  `;
+
+  updateClock(state.stopwatch.elapsed);
+
+  // Docks the sticky timer bar directly under the app's own header rather
+  // than guessing its height in CSS — the header's real rendered height
+  // (padding + content) is measured here instead.
+  const stickyBar = document.querySelector(".exam-sticky-bar");
+  const headerEl = document.querySelector("header.top-bar");
+  if (stickyBar && headerEl) stickyBar.style.top = `${headerEl.offsetHeight}px`;
+
+  const calcBtn = document.getElementById("calc-btn");
+  if (calcBtn) calcBtn.addEventListener("click", showCalculatorModal);
+
+  session.questions.forEach((q, i) => {
+    const savedAnswer = state.answers[q.id];
+    const idSuffix = `-${i}`;
+    if (q.chart) renderChartCanvas(`question-chart-${i}`, state.subjectKey, q.chart);
+    if (q.type === "numberline") {
+      setupNumberLine(q, savedAnswer, idSuffix);
+    } else if (q.type === "grid-shade") {
+      setupGridShade(q, savedAnswer, idSuffix);
+    } else if (q.type === "click-a-region") {
+      setupClickRegion(q, savedAnswer, idSuffix);
+    } else if (q.type === "mcq") {
+      const container = document.getElementById(`exam-q-${i}`);
+      container.querySelectorAll(".option-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.answers[q.id] = Number(btn.dataset.index);
+          container.querySelectorAll(".option-btn").forEach((b) => b.classList.remove("selected"));
+          btn.classList.add("selected");
+        });
+      });
+    } else {
+      const input = document.getElementById(`short-answer${idSuffix}`);
+      input.addEventListener("input", () => {
+        state.answers[q.id] = input.value;
+      });
+    }
+  });
+
+  document.getElementById("finish-exam-btn").addEventListener("click", async () => {
+    const unanswered = session.questions.filter((sq) => state.answers[sq.id] === undefined).length;
+    const message = unanswered
+      ? `You still have ${unanswered} question${unanswered === 1 ? "" : "s"} unanswered — those will be marked wrong. Finish the exam now?`
+      : "Finish the exam now?";
+    const confirmed = await showConfirmModal("Finish exam", message, "Yes, finish now");
+    if (confirmed) finishSession();
   });
 }
 

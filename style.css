@@ -263,6 +263,54 @@ main {
 
 .timer-bar .clock.low { color: var(--bad); }
 
+/* Exam mode's timer bar stays visible while scrolling through the whole
+   paper — its `top` offset is set from JS (app.js's renderExamPaper()) to
+   whatever the app header's actual rendered height is, so it docks directly
+   under the header rather than a hard-coded guess. Needs its own opaque
+   background (matching the page background it sits on) since content keeps
+   scrolling underneath it. */
+.exam-sticky-bar {
+  position: sticky;
+  z-index: 4;
+  background: var(--bg);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.exam-sticky-bar .btn.small { flex: 0 0 auto; }
+
+/* The front-cover "page" shown before the questions in exam mode — styled
+   to read distinctly from a normal question card without copying any real
+   exam board's actual cover layout or wording. */
+.exam-cover-board {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.exam-cover-title { margin: 6px 0 2px 0; }
+.exam-cover-source { color: var(--muted); font-size: 0.85rem; margin-bottom: 14px; }
+.exam-cover-meta {
+  display: grid;
+  gap: 6px;
+  font-size: 0.92rem;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.exam-cover-instructions ul {
+  margin: 8px 0 0 0;
+  padding-left: 20px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.exam-cover-instructions li { margin-bottom: 4px; }
+
+.exam-question-block .question-number { margin-bottom: 10px; }
+
+.exam-finish-section { text-align: center; }
+
 .progress-track {
   height: 6px;
   background: var(--border);
