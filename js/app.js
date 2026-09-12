@@ -1931,11 +1931,31 @@ async function finishSession({ timedOut = false } = {}) {
     }))
     .filter((t) => t.after > t.before);
 
+  // "Hat trick" congratulations: is THIS session about to complete the set
+  // of all three subjects for today? Fetched — and captured into a Set —
+  // BEFORE saveResult() below, deliberately: getResults() re-reads storage,
+  // so fetching it after saving would already include this very session and
+  // make "before" and "after" identical every time. Compared against every
+  // result for this profile (not just this subject, unlike priorResults
+  // above), scoped to today's date only. Keyed off "before this record,
+  // today was missing a subject; after it, today has all three" rather than
+  // just "today has all three" — that way it fires exactly once, on
+  // whichever session completes the set, and never again if a 4th or 5th
+  // session gets done today after the hat trick is already achieved.
+  const allProfileResultsBefore = await getResults({ profile: state.profile });
+  const todayStr = new Date().toDateString();
+  const subjectsDoneTodayBefore = new Set(
+    allProfileResultsBefore.filter((r) => new Date(r.timestamp).toDateString() === todayStr).map((r) => r.subject)
+  );
+  const subjectsDoneTodayAfter = new Set([...subjectsDoneTodayBefore, record.subject]);
+  const hatTrick =
+    subjectsDoneTodayAfter.size === Object.keys(SUBJECTS).length && subjectsDoneTodayBefore.size < Object.keys(SUBJECTS).length;
+
   await saveResult(record);
 
   const weakTopics = computeWeakTopics(flatAfter).filter((w) => w.streak >= WEAK_STREAK_THRESHOLD);
 
-  renderResults(record, details, { previousBest, previousLast, weakTopic: weakTopics[0] || null, leveledUp });
+  renderResults(record, details, { previousBest, previousLast, weakTopic: weakTopics[0] || null, leveledUp, hatTrick });
 }
 
 // ---------- RESULTS ----------
@@ -1948,7 +1968,7 @@ const GRADE_DESCRIPTIONS = {
   CC: "Hardest band — top of Foundation tier",
 };
 
-function renderResults(record, details, { previousBest, previousLast, weakTopic, leveledUp = [] }) {
+function renderResults(record, details, { previousBest, previousLast, weakTopic, leveledUp = [], hatTrick = false }) {
   destroyActiveCharts();
   let improvementHtml = "";
   if (previousLast !== null) {
@@ -2036,6 +2056,31 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
   if (weakBtn) {
     weakBtn.addEventListener("click", () => startSession(state.subjectKey, { mode: "topic", topicId: weakTopic.topicId }));
   }
+
+  if (hatTrick) showHatTrickModal();
+}
+
+// Popup shown the moment a session completes the set of all three subjects
+// (English, Maths, Science) practised on the same calendar day — see the
+// hatTrick computation in finishSession(). A genuine popup (not just a
+// banner on the results card) so it reads as an instant reward rather than
+// something easy to miss scrolling past.
+function showHatTrickModal() {
+  const existing = document.getElementById("hattrick-overlay");
+  if (existing) existing.remove();
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "hattrick-overlay";
+  overlay.innerHTML = `
+    <div class="modal-card hattrick-card">
+      <div class="hattrick-emoji">🏆</div>
+      <h3 style="margin-top:0; text-align:center;">All three subjects done today!</h3>
+      <div style="color:var(--muted); text-align:center;">English, Maths and Science all practised today — that's a full house. Brilliant work.</div>
+      <button class="btn" id="hattrick-close" style="margin-top:16px; width:100%;">Nice!</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("hattrick-close").addEventListener("click", () => overlay.remove());
 }
 
 // ---------- ASSESSOR / PARENT VIEW ----------

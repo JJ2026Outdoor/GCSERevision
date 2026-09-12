@@ -1,0 +1,19 @@
+This zip is a full snapshot of every file this session has, laid out to
+match the site's real folder structure (root / js / data), as of rev.28.
+
+Two files are deliberately NOT included, because I never have safe copies
+of them to hand back:
+
+- firebase-config.js — contains your live Firebase project config and the
+  real assessor PIN. I never resend this file, so your existing copy in
+  the repo is still the current, correct one — don't overwrite it with
+  anything from this zip.
+
+- js/timer.js — was never uploaded to this project, so I don't have the
+  real version. Your existing copy in the repo is unaffected; just don't
+  delete it when copying these files in.
+
+Everything else here is current as of rev.28 (English SPaG & Vocabulary
+generators). If you're updating your live repo, copy these files in
+alongside your existing firebase-config.js and js/timer.js rather than
+replacing the whole folder.

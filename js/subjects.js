@@ -2,6 +2,8 @@ import { MATHS_TESTS } from "../data/maths.js";
 import { SCIENCE_TESTS } from "../data/science.js";
 import { ENGLISH_TESTS } from "../data/english.js";
 import { MATHS_GENERATORS } from "../data/maths-generators.js";
+import { SCIENCE_GENERATORS } from "../data/science-generators.js";
+import { ENGLISH_GENERATORS } from "../data/english-generators.js";
 import { PAST_PAPER_QUESTIONS } from "../data/past-papers.js";
 
 export const SUBJECTS = {
@@ -48,14 +50,27 @@ function tagQuestions(topic) {
   }));
 }
 
-// Maths also draws from randomised "generator" questions (see
-// data/maths-generators.js) — each one is re-rolled with fresh numbers every
-// time it's included in a pool, which is what gives Maths near-unlimited
-// variety on top of the hand-written banks. Other subjects are fact- and
-// comprehension-based, which doesn't template the same way, so they rely on
-// a larger hand-written bank instead.
+// All three subjects now draw from randomised "generator" questions — see
+// data/maths-generators.js, data/science-generators.js and
+// data/english-generators.js — each one re-rolled with fresh numbers/words
+// every time it's included in a pool. Science's and English's generators are
+// both deliberately limited to the parts of that subject which are genuinely
+// rule-based rather than comprehension/recall-based: Science's cover Physics
+// calculations, balancing an equation and a genetics cross (every formula/
+// cross type already appears as a hand-written question in data/science.js);
+// English's are confined entirely to topic english-1 (SPaG & Vocabulary) —
+// synonyms/antonyms, homophones, possessive apostrophes, irregular verb
+// tenses, word class identification, comma placement and formal/informal
+// register — built from curated word/sentence banks or wrong-option rules
+// that hold regardless of which words get slotted in, so the generated
+// answer is correct by construction. english-2 through english-5
+// (comprehension, fiction inference, literary devices, poetry) get no
+// generators, for the same reason science-1 (pure recall) didn't.
 function generatorsForSubject(subjectKey) {
-  return subjectKey === "maths" ? MATHS_GENERATORS : [];
+  if (subjectKey === "maths") return MATHS_GENERATORS;
+  if (subjectKey === "science") return SCIENCE_GENERATORS;
+  if (subjectKey === "english") return ENGLISH_GENERATORS;
+  return [];
 }
 
 function tagGenerated(subjectKey, generatorDef) {
@@ -156,15 +171,18 @@ export function getAvailablePapers(subjectKey) {
 
 // Official "time allowed" for each real past paper, taken directly from that
 // paper's own front page/instructions (not estimated) — confirmed against
-// the source PDF for every paper except the two English ones, which don't
-// have a source PDF in this project's uploads to confirm from (see
+// the source PDF for every paper except the two SAM English ones, which
+// don't have a source PDF in this project's uploads to confirm from (see
 // GCSERevision-current-state.md). Those two fall back to
 // DEFAULT_TIME_ALLOWED_MINUTES, clearly flagged as unconfirmed rather than
-// presented as a real figure — update this table once the real English past
-// papers are available to check.
+// presented as a real figure. The two real S25 English papers added since
+// (Unit 2 and Unit 3) both state "2 hours" directly on their own front page,
+// so those ARE confirmed and listed below like every other real paper.
 export const PAPER_TIME_ALLOWED_MINUTES = {
   "S25|Unit 1 (Non-Calculator)": 90,
   "S25|Unit 2 (Calculator-Allowed)": 90,
+  "S25|Unit 2: Reading and Writing: Description, Narration and Exposition": 120,
+  "S25|Unit 3: Reading and Writing: Argumentation, Persuasion and Instructional": 120,
   "SAM|Mathematics and Numeracy Unit 1 (Calculator-Allowed)": 90,
   "SAM|Mathematics and Numeracy Unit 2 (Non-Calculator)": 90,
   "SAM|Mathematics and Numeracy Unit 3 (Calculator-Allowed)": 105,
