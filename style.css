@@ -583,6 +583,123 @@ input.text-answer:focus { outline: none; border-color: var(--primary); }
   color: var(--muted);
 }
 
+/* Assessor (parent) calendar — reuses .cal-weekdays/.cal-grid's 7-column
+   layout above, but cells are buttons (a day with sessions is tappable to
+   open the day-detail modal) with their own dot-based markers instead of a
+   single done/missed glyph, since a day here can carry more than one
+   subject. */
+.assessor-cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.assessor-cal-cell {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  background: var(--bg);
+  border: none;
+  font-family: inherit;
+  color: var(--text);
+  padding: 0;
+  gap: 3px;
+}
+
+.assessor-cal-cell.empty { background: transparent; }
+.assessor-cal-cell.today { border: 2px solid var(--primary); }
+.assessor-cal-cell.future { color: var(--muted); opacity: 0.5; }
+.assessor-cal-cell.has-data { background: #eef2fb; cursor: pointer; }
+.assessor-cal-cell.has-data:hover { background: #dfe6f9; }
+.assessor-cal-cell:disabled { cursor: default; }
+
+.assessor-cal-cell .cal-day { font-weight: 600; }
+
+.assessor-cal-dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+  min-height: 8px;
+}
+
+.assessor-cal-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: inline-block;
+}
+
+.assessor-cal-dot.low {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--bad);
+}
+
+.assessor-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  align-items: center;
+}
+
+.assessor-cal-legend .assessor-cal-dot { margin-right: 4px; vertical-align: middle; }
+
+.assessor-cal-day-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.assessor-cal-day-row:first-of-type { border-top: none; padding-top: 4px; }
+
+.assessor-cal-low-text { color: var(--bad); }
+
+/* Overall-averages dials — one semicircular gauge per subject, all-time
+   average, separate from the calendar's per-day markers above. */
+.assessor-dials {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-around;
+  gap: 16px;
+}
+
+.assessor-dial {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 110px;
+}
+
+.assessor-dial-svg { width: 100px; height: 55px; }
+
+.assessor-dial-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 12;
+  stroke-linecap: round;
+}
+
+.assessor-dial-fill {
+  fill: none;
+  stroke-width: 12;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.3s ease;
+}
+
+.assessor-dial .dial-pct { font-size: 1.15rem; font-weight: 800; margin-top: -6px; }
+.assessor-dial .dial-subject { font-size: 0.8rem; font-weight: 700; margin-top: 2px; }
+.assessor-dial .dial-meta { font-size: 0.72rem; color: var(--muted); }
+
 .locked-card { background: var(--bg); border-style: dashed; }
 
 .sync-badge {
