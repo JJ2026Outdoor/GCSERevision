@@ -1499,6 +1499,13 @@ function renderQuestion() {
   const savedAnswer = state.answers[q.id];
 
   const passageHtml = q.passage ? `<div class="passage-box">${escapeHtml(q.passage)}</div>` : "";
+  // Some real past-paper reading questions (an infographic, e.g. WJEC S25
+  // English Unit 2/3's "Text A"/"Text D") can't be answered from the prompt
+  // text alone — the actual source document's image is the thing being
+  // read, same as a real candidate would open the resource booklet. `image`
+  // is a path (relative to the site root) to that page, scanned from the
+  // real resource material.
+  const imageHtml = q.image ? `<img class="question-image" src="${escapeHtml(q.image)}" alt="Exam resource material" />` : "";
   const chartHtml = q.chart ? `<div class="chart-wrap"><canvas id="question-chart"></canvas></div>` : "";
   const paperBadgeHtml = q.source ? `<span class="paper-badge" title="${escapeHtml(q.source.label)} — ${escapeHtml(q.source.paper)}">${escapeHtml(q.source.code)} paper</span>` : "";
   const hintText = q.hint || genericHint(q);
@@ -1555,6 +1562,7 @@ function renderQuestion() {
       ${paperBadgeHtml}
     </div>
     ${passageHtml}
+    ${imageHtml}
     ${chartHtml}
     <p class="question-prompt">${escapeHtml(q.prompt)}</p>
     ${helpRowButtons ? `<div class="help-row">${helpRowButtons}</div>` : ""}
@@ -1721,6 +1729,7 @@ function renderExamPaper() {
   const questionsHtml = session.questions
     .map((q, i) => {
       const savedAnswer = state.answers[q.id];
+      const imageHtml = q.image ? `<img class="question-image" src="${escapeHtml(q.image)}" alt="Exam resource material" />` : "";
       const chartHtml = q.chart ? `<div class="chart-wrap"><canvas id="question-chart-${i}"></canvas></div>` : "";
       const idSuffix = `-${i}`;
 
@@ -1752,6 +1761,7 @@ function renderExamPaper() {
       return `
         <div class="card exam-question-block" id="exam-q-${i}">
           <div class="question-number">Question ${i + 1} of ${total}</div>
+          ${imageHtml}
           ${chartHtml}
           <p class="question-prompt">${escapeHtml(q.prompt)}</p>
           ${answerHtml}
@@ -1847,6 +1857,7 @@ async function finishSession({ timedOut = false } = {}) {
       source: q.source || null,
       grade: q.grade || null,
       chart: q.chart || null,
+      image: q.image || null,
       numberline: q.numberline || null,
       // null (not undefined) when unanswered/not applicable — Firestore
       // rejects undefined field values, and this object gets persisted
@@ -1897,7 +1908,7 @@ async function finishSession({ timedOut = false } = {}) {
     // in the assessor view, or if this question ever changes or is removed
     // from the data files down the line — without needing to re-look it up
     // from live content.
-    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart, numberline, userAnswerRaw, usedHint, usedAudio }) => ({
+    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart, image, numberline, userAnswerRaw, usedHint, usedAudio }) => ({
       questionId,
       topicId,
       topicTitle,
@@ -1909,6 +1920,7 @@ async function finishSession({ timedOut = false } = {}) {
       source,
       grade,
       chart,
+      image,
       numberline,
       userAnswerRaw,
       usedHint,
@@ -2010,6 +2022,7 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
         d.source ? `<span class="paper-badge" title="${escapeHtml(d.source.label)} — ${escapeHtml(d.source.paper)}">${escapeHtml(d.source.code)} paper</span>` : ""
       }</div>
         <div style="font-weight:600; margin-top:4px;">${escapeHtml(d.prompt)}</div>
+        ${!d.correct && d.image ? `<img class="question-image" src="${escapeHtml(d.image)}" alt="Exam resource material" />` : ""}
         ${!d.correct && d.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="result-chart-${i}"></canvas></div>` : ""}
         ${!d.correct && d.numberline ? renderNumberLineReviewHtml(d.numberline, d.userAnswerRaw, d.correct) : ""}
         <div class="answers">Your answer: <strong>${escapeHtml(d.userAnswerDisplay)}</strong>${
@@ -2563,6 +2576,7 @@ async function renderAssessorProfile(profileName) {
                   a.usedHint ? `<span class="help-badge" title="Used the hint">🤔</span>` : ""
                 }${a.usedAudio ? `<span class="help-badge" title="Used read-aloud">🔊</span>` : ""}</div>
                 <div style="font-weight:600; margin-top:4px;">${escapeHtml(a.prompt || "(question text not recorded for this older session)")}</div>
+                ${a.image ? `<img class="question-image" src="${escapeHtml(a.image)}" alt="Exam resource material" />` : ""}
                 ${a.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="assessor-chart-${i}-${j}"></canvas></div>` : ""}
                 ${a.numberline ? renderNumberLineReviewHtml(a.numberline, a.userAnswerRaw, a.correct) : ""}
                 <div class="answers">Answer given: <strong>${escapeHtml(a.userAnswer)}</strong>${

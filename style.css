@@ -424,6 +424,21 @@ main {
   overflow-y: auto;
 }
 
+/* A real resource-material page (e.g. an infographic a past-paper question
+   is based on) shown alongside its question — sized to be readable but
+   never wider than the question card, with a light border/shadow so it
+   reads as a document rather than a decorative image. */
+.question-image {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  height: auto;
+  margin: 0 auto 16px auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
 .option-list { display: flex; flex-direction: column; gap: 10px; }
 
 .option-btn {
