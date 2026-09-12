@@ -725,6 +725,12 @@ input.text-answer:focus { outline: none; border-color: var(--primary); }
 .assessor-dial .dial-subject { font-size: 0.8rem; font-weight: 700; margin-top: 2px; }
 .assessor-dial .dial-meta { font-size: 0.72rem; color: var(--muted); }
 
+/* Same dials, shown on the student's own home screen (not just the
+   assessor view) — a little breathing room since it sits between the
+   greeting text and the subject cards rather than under its own card
+   heading. */
+.home-dials { margin-bottom: 6px; }
+
 .locked-card { background: var(--bg); border-style: dashed; }
 
 .sync-badge {

@@ -1212,6 +1212,24 @@ async function renderHome() {
   main.innerHTML = `<div class="empty-state">Loading your progress…</div>`;
   const results = await getResults({ profile: state.profile });
   const streak = computeStreak(results);
+  // Same all-time-average dials the assessor view shows (rev.24) — now also
+  // shown to the student herself, right on her own home screen, at her
+  // request (rev.30). Reuses computeAssessorSubjectOverallAverages/
+  // buildAssessorSubjectDialsHtml, but — after reconsidering the red
+  // under-40% flag now that it's actually in front of the student herself,
+  // not just the parent (rev.31) — passes showLowFlag=false so her dials
+  // always use each subject's normal colour, never red. The assessor view's
+  // own call below is untouched, so a parent monitoring from there still
+  // gets the red flag. Hidden entirely until she has at least one session in
+  // any subject — a "No sessions yet" dial row would just duplicate what
+  // each subject card's own subtitle already says on a brand new profile.
+  const homeSubjectOverallAvg = computeAssessorSubjectOverallAverages(results);
+  const homeDialsHtml = Object.keys(homeSubjectOverallAvg).length
+    ? `
+      <div style="color:var(--muted); font-size:0.8rem; margin:14px 0 4px;">Your all-time averages</div>
+      <div class="assessor-dials home-dials">${buildAssessorSubjectDialsHtml(homeSubjectOverallAvg, false)}</div>
+    `
+    : "";
 
   const subjectCards = Object.values(SUBJECTS)
     .map((subject) => {
@@ -1248,6 +1266,7 @@ async function renderHome() {
         ${streak > 0 ? `<span class="streak-badge" title="Consecutive days with at least one completed session">🔥 ${streak} day streak</span>` : ""}
         <div style="color:var(--muted); font-size:0.85rem; margin-top:2px;">Pick a subject — 5 random questions, however long it takes</div>
       </div>
+      ${homeDialsHtml}
       <div class="subject-grid">${subjectCards}</div>
     </div>
     ${examBannerHtml}
@@ -1499,6 +1518,13 @@ function renderQuestion() {
   const savedAnswer = state.answers[q.id];
 
   const passageHtml = q.passage ? `<div class="passage-box">${escapeHtml(q.passage)}</div>` : "";
+  // Some real past-paper reading questions (an infographic, e.g. WJEC S25
+  // English Unit 2/3's "Text A"/"Text D") can't be answered from the prompt
+  // text alone — the actual source document's image is the thing being
+  // read, same as a real candidate would open the resource booklet. `image`
+  // is a path (relative to the site root) to that page, scanned from the
+  // real resource material.
+  const imageHtml = q.image ? `<img class="question-image" src="${escapeHtml(q.image)}" alt="Exam resource material" />` : "";
   const chartHtml = q.chart ? `<div class="chart-wrap"><canvas id="question-chart"></canvas></div>` : "";
   const paperBadgeHtml = q.source ? `<span class="paper-badge" title="${escapeHtml(q.source.label)} — ${escapeHtml(q.source.paper)}">${escapeHtml(q.source.code)} paper</span>` : "";
   const hintText = q.hint || genericHint(q);
@@ -1555,6 +1581,7 @@ function renderQuestion() {
       ${paperBadgeHtml}
     </div>
     ${passageHtml}
+    ${imageHtml}
     ${chartHtml}
     <p class="question-prompt">${escapeHtml(q.prompt)}</p>
     ${helpRowButtons ? `<div class="help-row">${helpRowButtons}</div>` : ""}
@@ -1721,6 +1748,7 @@ function renderExamPaper() {
   const questionsHtml = session.questions
     .map((q, i) => {
       const savedAnswer = state.answers[q.id];
+      const imageHtml = q.image ? `<img class="question-image" src="${escapeHtml(q.image)}" alt="Exam resource material" />` : "";
       const chartHtml = q.chart ? `<div class="chart-wrap"><canvas id="question-chart-${i}"></canvas></div>` : "";
       const idSuffix = `-${i}`;
 
@@ -1752,6 +1780,7 @@ function renderExamPaper() {
       return `
         <div class="card exam-question-block" id="exam-q-${i}">
           <div class="question-number">Question ${i + 1} of ${total}</div>
+          ${imageHtml}
           ${chartHtml}
           <p class="question-prompt">${escapeHtml(q.prompt)}</p>
           ${answerHtml}
@@ -1847,6 +1876,7 @@ async function finishSession({ timedOut = false } = {}) {
       source: q.source || null,
       grade: q.grade || null,
       chart: q.chart || null,
+      image: q.image || null,
       numberline: q.numberline || null,
       // null (not undefined) when unanswered/not applicable — Firestore
       // rejects undefined field values, and this object gets persisted
@@ -1897,7 +1927,7 @@ async function finishSession({ timedOut = false } = {}) {
     // in the assessor view, or if this question ever changes or is removed
     // from the data files down the line — without needing to re-look it up
     // from live content.
-    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart, numberline, userAnswerRaw, usedHint, usedAudio }) => ({
+    answers: details.map(({ questionId, topicId, topicTitle, prompt, correct, userAnswerDisplay: u, correctAnswerDisplay: c, explanation, source, grade, chart, image, numberline, userAnswerRaw, usedHint, usedAudio }) => ({
       questionId,
       topicId,
       topicTitle,
@@ -1909,6 +1939,7 @@ async function finishSession({ timedOut = false } = {}) {
       source,
       grade,
       chart,
+      image,
       numberline,
       userAnswerRaw,
       usedHint,
@@ -2010,6 +2041,7 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
         d.source ? `<span class="paper-badge" title="${escapeHtml(d.source.label)} — ${escapeHtml(d.source.paper)}">${escapeHtml(d.source.code)} paper</span>` : ""
       }</div>
         <div style="font-weight:600; margin-top:4px;">${escapeHtml(d.prompt)}</div>
+        ${!d.correct && d.image ? `<img class="question-image" src="${escapeHtml(d.image)}" alt="Exam resource material" />` : ""}
         ${!d.correct && d.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="result-chart-${i}"></canvas></div>` : ""}
         ${!d.correct && d.numberline ? renderNumberLineReviewHtml(d.numberline, d.userAnswerRaw, d.correct) : ""}
         <div class="answers">Your answer: <strong>${escapeHtml(d.userAnswerDisplay)}</strong>${
@@ -2252,15 +2284,19 @@ function computeAssessorSubjectOverallAverages(results) {
 // standard stroke-dasharray/dashoffset trick on a fixed semicircle path so
 // no per-subject path math is needed, just the offset. Coloured to match
 // that subject everywhere else in the app (SUBJECT_COLOR), or red when the
-// all-time average is below CALENDAR_LOW_THRESHOLD.
-function buildAssessorSubjectDialsHtml(subjectOverallAvg) {
+// all-time average is below CALENDAR_LOW_THRESHOLD — UNLESS showLowFlag is
+// false, in which case it always uses the subject's normal colour. This
+// only ever gets turned off for the student's own home-screen dials (rev.31)
+// — a parent monitoring from the assessor view still gets the red flag as
+// the fast "which subject needs attention" signal it was built for.
+function buildAssessorSubjectDialsHtml(subjectOverallAvg, showLowFlag = true) {
   const radius = 50;
   const circumference = Math.PI * radius; // semicircle arc length
   const dials = Object.values(SUBJECTS)
     .filter((subject) => subjectOverallAvg[subject.key])
     .map((subject) => {
       const { avg, count } = subjectOverallAvg[subject.key];
-      const low = avg < CALENDAR_LOW_THRESHOLD;
+      const low = showLowFlag && avg < CALENDAR_LOW_THRESHOLD;
       const offset = circumference * (1 - avg / 100);
       const color = low ? "var(--bad)" : SUBJECT_COLOR[subject.key];
       return `
@@ -2563,6 +2599,7 @@ async function renderAssessorProfile(profileName) {
                   a.usedHint ? `<span class="help-badge" title="Used the hint">🤔</span>` : ""
                 }${a.usedAudio ? `<span class="help-badge" title="Used read-aloud">🔊</span>` : ""}</div>
                 <div style="font-weight:600; margin-top:4px;">${escapeHtml(a.prompt || "(question text not recorded for this older session)")}</div>
+                ${a.image ? `<img class="question-image" src="${escapeHtml(a.image)}" alt="Exam resource material" />` : ""}
                 ${a.chart ? `<div class="chart-wrap result-chart-wrap"><canvas id="assessor-chart-${i}-${j}"></canvas></div>` : ""}
                 ${a.numberline ? renderNumberLineReviewHtml(a.numberline, a.userAnswerRaw, a.correct) : ""}
                 <div class="answers">Answer given: <strong>${escapeHtml(a.userAnswer)}</strong>${
