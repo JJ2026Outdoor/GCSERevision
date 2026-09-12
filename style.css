@@ -293,6 +293,16 @@ main {
   vertical-align: middle;
 }
 
+.hattrick-card {
+  text-align: center;
+  border: 2px solid var(--streak);
+}
+.hattrick-emoji {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
 /* The front-cover "page" shown before the questions in exam mode — styled
    to read distinctly from a normal question card without copying any real
    exam board's actual cover layout or wording. */
