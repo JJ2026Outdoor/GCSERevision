@@ -27,7 +27,11 @@ const WEAK_STREAK_THRESHOLD = 3;
 // rotation's start date onward — every other day, and every Saturday before
 // it starts, offers nothing. One shared calendar (not per-profile).
 const EXAM_ROTATION_START = new Date(2026, 9, 3); // 3 Oct 2026 — first Saturday of October 2026
-const EXAM_ROTATION_SUBJECTS = ["maths", "science", "english", null]; // null = rest week
+// SWITCHED OFF (Sept 2026): every week is a rest week, so no Saturday exam banner
+// appears for anyone. English Unit 1 practice is being sat on paper (mock papers),
+// and the assessor view's "Exam papers" list still starts any real paper on demand.
+// To bring the rotation back, restore: ["maths", "science", "english", null]
+const EXAM_ROTATION_SUBJECTS = [null]; // null = rest week
 
 function examRotationSubjectFor(date) {
   if (date.getDay() !== 6) return null; // Saturdays only (0 = Sunday ... 6 = Saturday)
