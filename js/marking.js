@@ -66,6 +66,17 @@ export function isCorrect(question, userAnswer) {
     if (typeof userAnswer !== "number" || Number.isNaN(userAnswer)) return false;
     return classifyAngleDeg(userAnswer, question.classTolerance) === question.correctClass;
   }
+  if (question.type === "selfmark") {
+    // Written-response practice (e.g. a 4-mark "explain the effect of these
+    // two words" question) can't be auto-marked, so the learner writes an
+    // answer, is shown the mark-scheme points, and ticks the ones her answer
+    // made. The answer object is { text, ticks: [checklist indices] }. It
+    // counts as correct when she wrote something AND ticked at least
+    // `passMarks` points.
+    if (!userAnswer || typeof userAnswer !== "object") return false;
+    if (!String(userAnswer.text || "").trim()) return false;
+    return (userAnswer.ticks || []).length >= question.passMarks;
+  }
   if (question.type === "click-a-region") {
     if (question.selectMode === "multi") {
       if (!Array.isArray(userAnswer)) return false;
@@ -98,6 +109,7 @@ const ANGLE_CLASS_LABEL = {
 
 export function correctAnswerDisplay(question) {
   if (question.type === "mcq") return optionLabel(question.options[question.correctIndex]);
+  if (question.type === "selfmark") return question.modelAnswer;
   if (question.type === "numberline") return question.numberline.correctLabel || String(question.numberline.correct);
   if (question.type === "grid-shade") {
     return question.matchMode === "count"
@@ -120,6 +132,11 @@ export function correctAnswerDisplay(question) {
 export function userAnswerDisplay(question, userAnswer) {
   if (userAnswer === undefined || userAnswer === null || userAnswer === "") return "(no answer given)";
   if (question.type === "mcq") return optionLabel(question.options[Number(userAnswer)]);
+  if (question.type === "selfmark") {
+    const text = userAnswer && typeof userAnswer === "object" ? String(userAnswer.text || "").trim() : "";
+    if (!text) return "(no answer given)";
+    return `${text} [self-marked ${(userAnswer.ticks || []).length}/${question.checklist.length}]`;
+  }
   if (question.type === "numberline") return `${userAnswer}${question.numberline.unitLabel ? " " + question.numberline.unitLabel : ""}`;
   if (question.type === "grid-shade") {
     if (!Array.isArray(userAnswer) || userAnswer.length === 0) return "(no cells shaded)";

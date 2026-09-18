@@ -1212,6 +1212,16 @@ async function renderHome() {
   main.innerHTML = `<div class="empty-state">Loading your progress…</div>`;
   const results = await getResults({ profile: state.profile });
   const streak = computeStreak(results);
+  // Overall-average dials (built for the assessor view in rev.24) shown on the
+  // student's own home screen too. Left out entirely on a brand-new profile
+  // (no sessions in any subject) — each subject card already says "no sessions
+  // yet" there, so an empty dial row would only duplicate it. The red
+  // under-40% flag is deliberately switched off here (showLowFlag=false); the
+  // assessor view keeps it.
+  const homeDialAvgs = computeAssessorSubjectOverallAverages(results);
+  const homeDialsHtml = Object.keys(homeDialAvgs).length
+    ? `<div class="assessor-dials home-dials">${buildAssessorSubjectDialsHtml(homeDialAvgs, false)}</div>`
+    : "";
 
   const subjectCards = Object.values(SUBJECTS)
     .map((subject) => {
@@ -1248,6 +1258,7 @@ async function renderHome() {
         ${streak > 0 ? `<span class="streak-badge" title="Consecutive days with at least one completed session">🔥 ${streak} day streak</span>` : ""}
         <div style="color:var(--muted); font-size:0.85rem; margin-top:2px;">Pick a subject — 5 random questions, however long it takes</div>
       </div>
+      ${homeDialsHtml}
       <div class="subject-grid">${subjectCards}</div>
     </div>
     ${examBannerHtml}
@@ -1538,6 +1549,8 @@ function renderQuestion() {
     answerHtml = renderDragRadiusHtml(q, savedAnswer);
   } else if (q.type === "click-a-region") {
     answerHtml = renderClickRegionHtml(q, savedAnswer);
+  } else if (q.type === "selfmark") {
+    answerHtml = renderSelfMarkHtml(q, savedAnswer);
   } else {
     answerHtml = `<input type="text" class="text-answer" id="short-answer" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your answer" value="${savedAnswer !== undefined ? escapeHtml(savedAnswer) : ""}" />`;
   }
@@ -1579,6 +1592,7 @@ function renderQuestion() {
   if (q.type === "click-a-side") setupClickSide(q);
   if (q.type === "drag-a-radius") setupDragRadius(q, savedAnswer);
   if (q.type === "click-a-region") setupClickRegion(q, savedAnswer);
+  if (q.type === "selfmark") setupSelfMark(q, savedAnswer);
 
   const helpBtn = document.getElementById("help-btn");
   const hintBox = document.getElementById("hint-box");
@@ -1641,6 +1655,8 @@ function renderQuestion() {
     // Click/drag interaction is already wired up by setupClickSide()/
     // setupDragRadius()/setupClickRegion() above, same reasoning as the
     // numberline branch.
+  } else if (q.type === "selfmark") {
+    // Textarea + mark-scheme checklist are wired up by setupSelfMark() above.
   } else {
     const input = document.getElementById("short-answer");
     input.addEventListener("input", () => {
@@ -1659,6 +1675,74 @@ function renderQuestion() {
       state.qIndex += 1;
       renderQuestion();
     }
+  });
+}
+
+// ---------- SELF-MARKED WRITTEN ANSWER (e.g. Unit 1 Q1b-style) ----------
+//
+// Some exam questions (like the 4-mark "explain the effect of these two
+// words" question in WJEC Unit 1) are written answers that no instant marker
+// can fairly judge. This type lets her practise the real thing anyway: write
+// the answer in a box, press "Show mark scheme", then tick each mark-scheme
+// point her answer actually made. Once the scheme is showing, the writing is
+// locked so she can't quietly improve it after seeing what was wanted. The
+// saved answer is { text, ticks: [indices] } — see isCorrect() in marking.js.
+// Not used in exam mode (exam mode only draws real past-paper questions).
+function renderSelfMarkHtml(q, savedAnswer) {
+  const saved = savedAnswer && typeof savedAnswer === "object" ? savedAnswer : { text: "", ticks: [] };
+  const revealed = !!saved.revealed;
+  return `
+    <div class="selfmark">
+      <textarea class="text-answer selfmark-text" id="selfmark-text" rows="6" autocomplete="off" spellcheck="true" placeholder="Write your answer here, in full sentences…" ${revealed ? "readonly" : ""}>${escapeHtml(saved.text || "")}</textarea>
+      <button class="btn secondary" id="selfmark-reveal" type="button" ${revealed ? "hidden" : ""}>I've finished — show the mark scheme</button>
+      <div class="selfmark-scheme" id="selfmark-scheme" ${revealed ? "" : "hidden"}>
+        <div class="selfmark-model"><strong>A strong answer might say:</strong><br />${escapeHtml(q.modelAnswer)}</div>
+        <p class="selfmark-tick-title">Tick each point your own answer made — be strict, as an examiner would be:</p>
+        ${q.checklist
+          .map(
+            (item, i) => `<label class="selfmark-item"><input type="checkbox" data-i="${i}" ${(saved.ticks || []).includes(i) ? "checked" : ""} /> <span>${escapeHtml(item)}</span></label>`
+          )
+          .join("")}
+        <div class="selfmark-score" id="selfmark-score"></div>
+      </div>
+    </div>
+  `;
+}
+
+function setupSelfMark(q, savedAnswer) {
+  const answer = savedAnswer && typeof savedAnswer === "object" ? { ...savedAnswer } : { text: "", ticks: [], revealed: false };
+  if (!Array.isArray(answer.ticks)) answer.ticks = [];
+  state.answers[q.id] = answer;
+  const textEl = document.getElementById("selfmark-text");
+  const revealBtn = document.getElementById("selfmark-reveal");
+  const scheme = document.getElementById("selfmark-scheme");
+  const scoreEl = document.getElementById("selfmark-score");
+  const updateScore = () => {
+    scoreEl.textContent = `You've given yourself ${answer.ticks.length} / ${q.checklist.length}`;
+  };
+  updateScore();
+  textEl.addEventListener("input", () => {
+    answer.text = textEl.value;
+  });
+  revealBtn.addEventListener("click", () => {
+    // Nothing written yet → nothing to mark, so don't reveal the scheme.
+    if (!textEl.value.trim()) {
+      textEl.focus();
+      return;
+    }
+    answer.revealed = true;
+    answer.text = textEl.value;
+    textEl.readOnly = true;
+    revealBtn.hidden = true;
+    scheme.hidden = false;
+  });
+  scheme.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+    box.addEventListener("change", () => {
+      const i = Number(box.dataset.i);
+      answer.ticks = answer.ticks.filter((t) => t !== i);
+      if (box.checked) answer.ticks.push(i);
+      updateScore();
+    });
   });
 }
 
@@ -2266,14 +2350,16 @@ function computeAssessorSubjectOverallAverages(results) {
 // no per-subject path math is needed, just the offset. Coloured to match
 // that subject everywhere else in the app (SUBJECT_COLOR), or red when the
 // all-time average is below CALENDAR_LOW_THRESHOLD.
-function buildAssessorSubjectDialsHtml(subjectOverallAvg) {
+function buildAssessorSubjectDialsHtml(subjectOverallAvg, showLowFlag = true) {
   const radius = 50;
   const circumference = Math.PI * radius; // semicircle arc length
   const dials = Object.values(SUBJECTS)
     .filter((subject) => subjectOverallAvg[subject.key])
     .map((subject) => {
       const { avg, count } = subjectOverallAvg[subject.key];
-      const low = avg < CALENDAR_LOW_THRESHOLD;
+      // showLowFlag=false (the student's own home screen) never takes the red
+      // branch — every dial keeps its normal subject colour regardless of average.
+      const low = showLowFlag && avg < CALENDAR_LOW_THRESHOLD;
       const offset = circumference * (1 - avg / 100);
       const color = low ? "var(--bad)" : SUBJECT_COLOR[subject.key];
       return `

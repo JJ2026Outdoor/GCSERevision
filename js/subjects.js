@@ -98,8 +98,25 @@ function tagGenerated(subjectKey, generatorDef) {
 // this comment used to say "only Maths has any right now", which was true
 // when it was written but is stale as of the content added since.
 function pastPapersForSubject(subjectKey) {
-  return PAST_PAPER_QUESTIONS.filter((q) => getTopic(subjectKey, q.topicId) !== null);
+  return PAST_PAPER_QUESTIONS.filter(
+    (q) =>
+      getTopic(subjectKey, q.topicId) !== null &&
+      !(q.source && PAUSED_PAPER_KEYS.includes(paperKeyFor(q.source)))
+  );
 }
+
+// Papers temporarily switched OFF everywhere — daily/topic pools, exam mode
+// and the assessor's "start any paper" list — without deleting a single
+// question from data/past-papers.js. The two Summer 2025 English papers below
+// (3700U20 / 3700U30) belong to the older, separate WJEC English Language
+// qualification (entry codes 3700), not the 3750 English Language and
+// Literature course she sits; Unit 2 and Unit 3 there are non-exam
+// assessments anyway. Paused until after the Unit 1 exam on 2 Nov 2026 so
+// English revision time goes on Unit 1. To bring them back, empty this array.
+export const PAUSED_PAPER_KEYS = [
+  "S25|Unit 2: Reading and Writing: Description, Narration and Exposition",
+  "S25|Unit 3: Reading and Writing: Argumentation, Persuasion and Instructional"
+];
 
 function tagPastPaper(subjectKey, q) {
   const topic = getTopic(subjectKey, q.topicId);
@@ -183,6 +200,10 @@ export const PAPER_TIME_ALLOWED_MINUTES = {
   "S25|Unit 2 (Calculator-Allowed)": 90,
   "S25|Unit 2: Reading and Writing: Description, Narration and Exposition": 120,
   "S25|Unit 3: Reading and Writing: Argumentation, Persuasion and Instructional": 120,
+  // Both English SAMs state "Time 1 hour 30 minutes" on their own front page
+  // (Unit 1 SAM v4 Feb 2026; Unit 6 SAM), so they're confirmed, not defaulted.
+  "SAM|Unit 1: Context and Meaning": 90,
+  "SAM|Unit 6: Connections": 90,
   "SAM|Mathematics and Numeracy Unit 1 (Calculator-Allowed)": 90,
   "SAM|Mathematics and Numeracy Unit 2 (Non-Calculator)": 90,
   "SAM|Mathematics and Numeracy Unit 3 (Calculator-Allowed)": 105,
@@ -200,7 +221,7 @@ const DEFAULT_TIME_ALLOWED_MINUTES = 60;
 // Papers not present in PAPER_TIME_ALLOWED_MINUTES above — currently just
 // the two English past papers — so the UI can say so plainly instead of
 // quietly presenting a guessed number as if it were real.
-export const UNCONFIRMED_TIME_ALLOWED_PAPER_KEYS = ["SAM|Unit 1: Context and Meaning", "SAM|Unit 6: Connections"];
+export const UNCONFIRMED_TIME_ALLOWED_PAPER_KEYS = [];
 
 export function timeAllowedMinutes(paperKey) {
   return PAPER_TIME_ALLOWED_MINUTES[paperKey] || DEFAULT_TIME_ALLOWED_MINUTES;

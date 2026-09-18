@@ -230,6 +230,65 @@ function wordClassGenerator() {
   };
 }
 
+// ---------- Word class of TWO words in a line of poetry (WJEC Unit 1 Q1a style) ----------
+// Mirrors Unit 1 Q1a, which underlines two words from a line of a poem and asks
+// for their word class (1 mark; the mark scheme accepts "adjective" or
+// "modifier"). Every line below is original (not taken from any set poem), and
+// every pair is two words of the SAME class used unambiguously in that line —
+// no words like "run" or "silver" that could reasonably be read as another
+// class. CAPITALS mark the two words, as in the single-word generator above.
+const WORD_CLASS_PAIR_BANK = [
+  // adjectives (the mark scheme also accepts "modifier")
+  { line: "Not a FANCY card or a SHINY ribbon.", words: ["fancy", "shiny"], answer: "adjective" },
+  { line: "The COLD, GREY sea rolled in.", words: ["cold", "grey"], answer: "adjective" },
+  { line: "A TALL, NARROW door creaked open.", words: ["tall", "narrow"], answer: "adjective" },
+  { line: "Beneath the HUGE, HOLLOW sky we waited.", words: ["huge", "hollow"], answer: "adjective" },
+  { line: "The GENTLE rain fell on the ANCIENT hills.", words: ["gentle", "ancient"], answer: "adjective" },
+  { line: "She wore a BRIGHT, SOFT scarf.", words: ["bright", "soft"], answer: "adjective" },
+  { line: "Only a LONELY, QUIET street remained.", words: ["lonely", "quiet"], answer: "adjective" },
+  // nouns
+  { line: "The MOON hung over the SEA.", words: ["moon", "sea"], answer: "noun" },
+  { line: "Bring me the BREAD and the WINE.", words: ["bread", "wine"], answer: "noun" },
+  { line: "The BIRD sang in the GARDEN.", words: ["bird", "garden"], answer: "noun" },
+  { line: "Her LAUGHTER filled the HALL.", words: ["laughter", "hall"], answer: "noun" },
+  { line: "The CHILDREN chased the BALL.", words: ["children", "ball"], answer: "noun" },
+  { line: "Night fell on the VILLAGE and the FIELDS.", words: ["village", "fields"], answer: "noun" },
+  { line: "The SOLDIER carried his RIFLE.", words: ["soldier", "rifle"], answer: "noun" },
+  // verbs
+  { line: "She RAN and JUMPED across the stream.", words: ["ran", "jumped"], answer: "verb" },
+  { line: "The wind HOWLED and ROARED.", words: ["howled", "roared"], answer: "verb" },
+  { line: "We LAUGHED and DANCED all night.", words: ["laughed", "danced"], answer: "verb" },
+  { line: "He WROTE a letter and POSTED it.", words: ["wrote", "posted"], answer: "verb" },
+  { line: "The children SANG and CLAPPED.", words: ["sang", "clapped"], answer: "verb" },
+  { line: "Snow FELL and COVERED the village.", words: ["fell", "covered"], answer: "verb" },
+  // adverbs
+  { line: "He spoke SOFTLY and SLOWLY.", words: ["softly", "slowly"], answer: "adverb" },
+  { line: "She ran QUICKLY and QUIETLY.", words: ["quickly", "quietly"], answer: "adverb" },
+  { line: "The bell rang LOUDLY and CLEARLY.", words: ["loudly", "clearly"], answer: "adverb" },
+  { line: "They waited PATIENTLY and CALMLY.", words: ["patiently", "calmly"], answer: "adverb" },
+  { line: "The rain fell GENTLY and STEADILY.", words: ["gently", "steadily"], answer: "adverb" },
+  { line: "He held her hand TENDERLY and FIRMLY.", words: ["tenderly", "firmly"], answer: "adverb" }
+];
+const WORD_CLASS_JOB = {
+  adjective: "describe nouns (things, people or places)",
+  noun: "name things, people or places",
+  verb: "show actions",
+  adverb: "say how an action is done"
+};
+
+function wordClassPairGenerator() {
+  const item = choice(WORD_CLASS_PAIR_BANK);
+  const accept = [item.answer, item.answer + "s"];
+  if (item.answer === "adjective") accept.push("modifier", "modifiers"); // WJEC mark scheme accepts both terms
+  const [w1, w2] = item.words;
+  return {
+    type: "short",
+    prompt: `What is the word class of the two words in capitals in this line? (1 mark)  “${item.line}”`,
+    accept,
+    explanation: `“${w1}” and “${w2}” are both ${item.answer}s — they ${WORD_CLASS_JOB[item.answer]}.${item.answer === "adjective" ? " (In the real exam, “modifier” is also accepted.)" : ""}`
+  };
+}
+
 // ---------- Comma after an introductory phrase ----------
 // Builds all four options mechanically from one intro phrase + one main
 // clause, so it's correct by construction rather than needing a pre-written
@@ -326,6 +385,7 @@ export const ENGLISH_GENERATORS = [
   { id: "e1gen-apostrophe", topicId: "english-1", grade: "GG", hint: "Work out how many owners there are first, then decide where the apostrophe goes.", generate: possessiveApostropheGenerator },
   { id: "e1gen-verbtense", topicId: "english-1", grade: "GG", hint: "Irregular verbs don't just add '-ed' — think about how you'd say it happened yesterday.", generate: irregularVerbGenerator },
   { id: "e1gen-wordclass", topicId: "english-1", grade: "FF", hint: "Ask what job the underlined word is doing in the sentence — naming something, describing it, showing an action, or linking words together.", generate: wordClassGenerator },
+  { id: "e1gen-wordclasspair", topicId: "english-1", grade: "GG", hint: "Both words do the same job. Ask what that job is: naming something, describing something, showing an action, or saying how an action is done.", generate: wordClassPairGenerator },
   { id: "e1gen-commaintro", topicId: "english-1", grade: "FF", hint: "A comma usually goes right after an introductory phrase, before the main part of the sentence begins.", generate: commaIntroGenerator },
   { id: "e1gen-register", topicId: "english-1", grade: "EE", hint: "Look for the option that avoids contractions and casual slang, using fuller, more precise wording.", generate: formalRegisterGenerator }
 ];
