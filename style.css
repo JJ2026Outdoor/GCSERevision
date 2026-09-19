@@ -995,3 +995,19 @@ textarea.selfmark-text[readonly] { background: var(--bg); }
 .lesson-feedback.bad { background: #fdeaea; border-left: 4px solid var(--bad); }
 .lesson-banner { border: 2px solid var(--primary); }
 .lesson-card [hidden], .lesson-check [hidden] { display: none !important; }
+
+/* ---------- read-aloud rows (lessons, results review) ---------- */
+.speak-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.lesson-feedback .speak-row { margin: 8px 0 0; }
+
+/* ---------- assessor lesson library / preview ---------- */
+.library-subject { margin: 18px 0 4px; }
+.library-topic h4 { margin: 12px 0 6px; color: var(--muted); font-size: 0.9rem; }
+.lesson-taught-tag { font-size: 0.75rem; font-weight: 700; color: var(--good); margin-left: 6px; }
+.lesson-preview-note { font-size: 0.75rem; font-weight: 600; color: var(--muted); margin-left: 8px; }
+.lesson-key-item { padding: 10px 0; border-top: 1px solid var(--border, rgba(128,128,128,0.25)); }
+.lesson-key-item:first-of-type { border-top: 0; }
+.key-options { list-style: none; padding: 0; margin: 6px 0; }
+.key-options li { padding: 6px 10px; margin: 4px 0; border-radius: 8px; border: 1px solid var(--border, rgba(128,128,128,0.3)); }
+.key-options li.key-correct { border-color: var(--good); font-weight: 700; }
+.key-short { margin: 6px 0; }

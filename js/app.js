@@ -16,6 +16,7 @@ import { isCorrect, correctAnswerDisplay, userAnswerDisplay, optionLabel, classi
 import { Stopwatch, formatTime } from "./timer.js";
 import { renderDashboardScreen, SUBJECT_COLOR } from "./dashboard.js";
 import { GLOSSARY } from "../data/glossary.js";
+import { LESSONS } from "../data/lessons.js";
 import { ASSESSOR_PIN } from "../firebase-config.js";
 
 const WEAK_STREAK_THRESHOLD = 3;
@@ -1043,10 +1044,83 @@ function speakText(text) {
     return;
   }
   window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 0.95;
-  window.speechSynthesis.speak(utterance);
+  // Long passages are spoken as a queue of short chunks: several browsers silently stop
+  // a single long utterance part-way through.
+  splitForSpeech(speechify(text)).forEach((chunk) => {
+    const utterance = new SpeechSynthesisUtterance(chunk);
+    utterance.rate = 0.95;
+    window.speechSynthesis.speak(utterance);
+  });
 }
+
+function stopSpeaking() {
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+}
+
+// Voices skip or mangle maths and science symbols ("7² × 2³", "Mg²⁺", "H₂O", "3/4"), so
+// spell them out as words before speaking. Only affects what is heard, never what is shown.
+function speechify(raw) {
+  const sup = { "²": "2", "³": "3" };
+  const sub = { "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9" };
+  let t = String(raw == null ? "" : raw);
+  t = t.replace(/([²³])([⁺⁻])/g, (m, n, sign) => ` ${sup[n]} ${sign === "⁺" ? "plus" : "minus"} `);
+  t = t.replace(/⁺/g, " plus ").replace(/⁻/g, " minus ");
+  t = t.replace(/[₀-₉]+/g, (m) => " " + m.split("").map((c) => sub[c]).join("") + " ");
+  t = t.replace(/\^\s*(\d+)/g, " to the power $1 ");
+  t = t.replace(/⁴/g, " to the power 4 ").replace(/⁵/g, " to the power 5 ");
+  t = t.replace(/²/g, " squared ").replace(/³/g, " cubed ");
+  t = t.replace(/(\d+)\s*\/\s*(\d+)/g, "$1 over $2");
+  t = t.replace(/\bm\/s\b/g, "metres per second").replace(/\bN\/kg\b/g, "newtons per kilogram");
+  t = t.replace(/(\d)\s*[–]\s*(\d)/g, "$1 to $2");
+  t = t.replace(/(^|[\s(=])-(?=\d)/g, "$1minus ");
+  const words = { "×": " times ", "÷": " divided by ", "−": " minus ", "+": " plus ", "=": " equals ", "≈": " is approximately ", "→": " gives ", "≤": " is less than or equal to ", "≥": " is greater than or equal to ", "<": " is less than ", ">": " is greater than ", "√": " square root of ", "π": " pi ", "°C": " degrees Celsius", "°": " degrees", "%": " percent", "Ω": " ohms", "Δ": " change in ", "½": " a half ", "¼": " a quarter ", "¾": " three quarters ", "…": ". ", "—": ", " };
+  Object.keys(words).sort((a, b) => b.length - a.length).forEach((k) => {
+    t = t.split(k).join(words[k]);
+  });
+  return t.replace(/\s+/g, " ").trim();
+}
+
+function splitForSpeech(text) {
+  const sentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text];
+  const chunks = [];
+  let cur = "";
+  sentences.forEach((snt) => {
+    if (cur && (cur + snt).length > 200) {
+      chunks.push(cur.trim());
+      cur = "";
+    }
+    cur += snt;
+  });
+  if (cur.trim()) chunks.push(cur.trim());
+  return chunks.length ? chunks : [text];
+}
+
+// Read-aloud is opt-in per profile (the "audio help" setting), so every button is only drawn
+// when it is on. Buttons carry their text (or a lesson id) in a data attribute and one
+// document-level listener does the speaking, so screens don't each need their own wiring.
+function audioHelpOn() {
+  return !!(state.profileSettings && state.profileSettings.audioHelp);
+}
+
+function speakBtnHtml(text, label = "🔊 Read aloud") {
+  return `<button class="btn secondary small speak-btn" type="button" data-speak="${escapeHtml(text)}">${label}</button>`;
+}
+
+document.addEventListener("click", (e) => {
+  const stopBtn = e.target.closest("[data-speak-stop]");
+  if (stopBtn) {
+    stopSpeaking();
+    return;
+  }
+  const lessonBtn = e.target.closest("[data-speak-lesson]");
+  if (lessonBtn) {
+    const lesson = LESSONS.find((l) => l.id === lessonBtn.dataset.speakLesson);
+    if (lesson) speakText(lessonSpeechText(lesson));
+    return;
+  }
+  const btn = e.target.closest("[data-speak]");
+  if (btn) speakText(btn.getAttribute("data-speak"));
+});
 
 function showCalculatorModal() {
   const existing = document.getElementById("calculator-overlay");
@@ -1424,14 +1498,9 @@ async function getPendingLesson() {
   return pickLessonForToday({ weak, lessonRecords });
 }
 
-function renderLesson(pending, onDone) {
-  destroyActiveCharts();
-  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-  const { lesson, weak } = pending;
-  const checks = pickChecks(lesson, 2);
-  const startedAt = Date.now();
-  const given = [];
-
+// The reading part of a lesson (explanation, worked example, watch-outs) — shared by the
+// lesson she sees and the assessor's read-only preview.
+function lessonBodyHtml(lesson) {
   const sectionsHtml = lesson.sections
     .map(
       (sec) => `
@@ -1442,12 +1511,7 @@ function renderLesson(pending, onDone) {
       </div>`
     )
     .join("");
-
-  main.innerHTML = `
-    <div class="card lesson-card">
-      <div class="lesson-tag">📘 Today's lesson</div>
-      <h2 class="lesson-title">${escapeHtml(lesson.title)}</h2>
-      <div class="lesson-why">${escapeHtml(SUBJECTS[weak.subject].name)} · ${escapeHtml(weak.topicTitle)} has been wrong ${weak.streak} times in a row, so let's go over it before you start. ${escapeHtml(lesson.why)}</div>
+  return `
       ${sectionsHtml}
       <div class="lesson-worked">
         <div class="lesson-worked-title">✏️ Worked example</div>
@@ -1458,7 +1522,45 @@ function renderLesson(pending, onDone) {
       <div class="lesson-watch">
         <div class="lesson-watch-title">⚠️ Watch out for</div>
         <ul>${lesson.watch.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>
-      </div>
+      </div>`;
+}
+
+function lessonSpeechText(lesson) {
+  const parts = [lesson.title];
+  if (lesson.why) parts.push(lesson.why);
+  lesson.sections.forEach((sec) => {
+    parts.push(sec.h);
+    (sec.p || []).forEach((t) => parts.push(t));
+    (sec.list || []).forEach((t) => parts.push(t));
+  });
+  parts.push("Worked example", lesson.worked.title);
+  lesson.worked.steps.forEach((t, i) => parts.push(`Step ${i + 1}: ${t}`));
+  parts.push(`The answer is ${lesson.worked.answer}`, "Watch out for");
+  lesson.watch.forEach((t) => parts.push(t));
+  return parts.map((t) => (/[.!?:]$/.test(t.trim()) ? t : t + ".")).join(" ");
+}
+
+function checkSpeechText(c) {
+  const parts = [c.prompt];
+  if (c.type === "mcq") c.options.forEach((o, i) => parts.push(`Option ${i + 1}: ${o}`));
+  return parts.join(". ");
+}
+
+function renderLesson(pending, onDone) {
+  destroyActiveCharts();
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  const { lesson, weak } = pending;
+  const checks = pickChecks(lesson, 2);
+  const startedAt = Date.now();
+  const given = [];
+
+  main.innerHTML = `
+    <div class="card lesson-card">
+      <div class="lesson-tag">📘 Today's lesson</div>
+      <h2 class="lesson-title">${escapeHtml(lesson.title)}</h2>
+      <div class="lesson-why">${escapeHtml(SUBJECTS[weak.subject].name)} · ${escapeHtml(weak.topicTitle)} has been wrong ${weak.streak} times in a row, so let's go over it before you start. ${escapeHtml(lesson.why)}</div>
+      ${audioHelpOn() ? `<div class="speak-row"><button class="btn secondary small" type="button" data-speak-lesson="${escapeHtml(lesson.id)}">🔊 Read the lesson to me</button><button class="btn secondary small" type="button" data-speak-stop="1">⏹ Stop</button></div>` : ""}
+      ${lessonBodyHtml(lesson)}
       <button class="btn block" id="lesson-checks-btn" type="button">I've read it — show me the ${checks.length} check questions</button>
     </div>
     <div id="lesson-checks-area"></div>
@@ -1478,6 +1580,7 @@ function renderLesson(pending, onDone) {
       <div class="card lesson-check">
         <div class="question-number">Check question ${i + 1} of ${checks.length}</div>
         <p class="question-prompt">${escapeHtml(c.prompt)}</p>
+        ${audioHelpOn() ? `<div class="speak-row">${speakBtnHtml(checkSpeechText(c), "🔊 Read the question")}</div>` : ""}
         ${answerHtml}
         <div class="lesson-feedback" id="lesson-feedback" hidden></div>
         <div class="nav-row"><button class="btn" id="lesson-check-btn" type="button">Check my answer</button></div>
@@ -1521,7 +1624,9 @@ function renderLesson(pending, onDone) {
       const fb = document.getElementById("lesson-feedback");
       fb.hidden = false;
       fb.className = `lesson-feedback ${ok ? "good" : "bad"}`;
-      fb.innerHTML = `<strong>${ok ? "✅ Correct!" : "❌ Not quite."}</strong> The answer is <strong>${escapeHtml(correctAnswerDisplay(c))}</strong>. ${escapeHtml(c.explanation)}`;
+      fb.innerHTML = `<strong>${ok ? "✅ Correct!" : "❌ Not quite."}</strong> The answer is <strong>${escapeHtml(correctAnswerDisplay(c))}</strong>. ${escapeHtml(c.explanation)}${
+        audioHelpOn() ? `<div class="speak-row">${speakBtnHtml(`${ok ? "Correct." : "Not quite."} The answer is ${correctAnswerDisplay(c)}. ${c.explanation}`, "🔊 Read the answer")}</div>` : ""
+      }`;
       if (c.type === "short") document.getElementById("lesson-short").readOnly = true;
       btn.textContent = isLastCheck ? "Finish lesson" : "Next check question";
     });
@@ -2365,6 +2470,14 @@ function renderResults(record, details, { previousBest, previousLast, weakTopic,
           d.correct ? "" : `<br/>Correct answer: <strong>${escapeHtml(d.correctAnswerDisplay)}</strong>`
         }</div>
         ${!d.correct ? `<div class="explanation">${escapeHtml(d.explanation)}</div>` : ""}
+        ${
+          audioHelpOn()
+            ? `<div class="speak-row">${speakBtnHtml(
+                `${d.prompt}. Your answer: ${d.userAnswerDisplay}. ${d.correct ? "That is correct." : `The correct answer is ${d.correctAnswerDisplay}. ${d.explanation || ""}`}`,
+                "🔊 Read the answer"
+              )}</div>`
+            : ""
+        }
       </div>
     `
     )
@@ -2516,8 +2629,10 @@ async function renderAssessorProfiles() {
     main.innerHTML = `
       <span class="back-link" id="back-home">&larr; Back</span>
       <div class="empty-state">No sessions recorded yet for any profile.</div>
+      <button class="btn secondary block" id="assessor-lib-btn" type="button">📘 Browse the lesson library</button>
     `;
     document.getElementById("back-home").addEventListener("click", renderHome);
+    document.getElementById("assessor-lib-btn").addEventListener("click", () => renderLessonLibrary(renderAssessorProfiles));
     return;
   }
 
@@ -2543,8 +2658,10 @@ async function renderAssessorProfiles() {
       <div style="color:var(--muted); font-size:0.88rem; margin-top:-8px;">Pick a profile to see its full session-by-session history.</div>
       <div class="test-list" style="margin-top:14px;">${rows.join("")}</div>
     </div>
+    <button class="btn secondary block" id="assessor-lib-btn" type="button">📘 Browse the lesson library</button>
   `;
   document.getElementById("back-home").addEventListener("click", renderHome);
+  document.getElementById("assessor-lib-btn").addEventListener("click", () => renderLessonLibrary(renderAssessorProfiles));
   main.querySelectorAll("[data-profile]").forEach((row) => {
     row.addEventListener("click", () => renderAssessorProfile(row.dataset.profile));
   });
@@ -2758,8 +2875,8 @@ function buildAssessorLessonsHtml(lessonRecords) {
       const subj = SUBJECTS[r.subject];
       const when = new Date(r.timestamp).toLocaleDateString(undefined, { day: "numeric", month: "short" });
       return `
-        <div style="margin-bottom:8px;">
-          <div style="font-weight:700;">${escapeHtml(r.lessonTitle || r.sessionTitle || "Lesson")}</div>
+        <div style="margin-bottom:8px;${r.lessonId ? " cursor:pointer;" : ""}" ${r.lessonId ? `data-open-lesson="${escapeHtml(r.lessonId)}"` : ""}>
+          <div style="font-weight:700;">${escapeHtml(r.lessonTitle || r.sessionTitle || "Lesson")}${r.lessonId ? " ›" : ""}</div>
           <div style="font-size:0.85rem; color:var(--muted);"><span style="color:${subj ? SUBJECT_COLOR[subj.key] : "inherit"}; font-weight:700;">${escapeHtml(subj ? subj.name : r.subject)}</span> · ${escapeHtml(when)} · checks ${r.score}/${r.total}${r.weakStreak ? ` · topic had been wrong ${r.weakStreak} in a row` : ""}</div>
         </div>`;
     })
@@ -2769,8 +2886,113 @@ function buildAssessorLessonsHtml(lessonRecords) {
       <h3 style="margin-top:0;">Lessons taught</h3>
       <div style="color:var(--muted); font-size:0.85rem; margin-top:-6px; margin-bottom:10px;">When a Maths or Science topic has been wrong 3 times in a row, one short lesson is taught before her first session of the day (a different weak topic each day). These are kept separate from her sessions and don't change any average.</div>
       ${rows || `<div class="empty-state">No lessons taught yet.</div>`}
+      <button class="btn secondary small" id="assessor-lib-btn2" type="button" style="margin-top:6px;">📘 Browse all lessons</button>
     </div>
   `;
+}
+
+// ---------- assessor: lesson library ----------
+
+// Every lesson the app can teach, grouped by subject and topic, so the assessor can read them
+// (and sit down and go through one with her). Read-only: nothing here is ever recorded.
+function renderLessonLibrary(backFn, taughtIds = new Set()) {
+  destroyActiveCharts();
+  stopSpeaking();
+  const groupsHtml = ["maths", "science"]
+    .filter((k) => SUBJECTS[k])
+    .map((k) => {
+      const topics = SUBJECTS[k].topics
+        .map((t) => {
+          const own = LESSONS.filter((l) => l.subject === k && l.topicId === t.id);
+          if (!own.length) return "";
+          const rows = own
+            .map((l) => {
+              const also = (l.alsoTopics || []).map((id) => (SUBJECTS[k].topics.find((x) => x.id === id) || {}).title).filter(Boolean);
+              return `
+              <div class="test-row" data-lesson-id="${escapeHtml(l.id)}" data-search="${escapeHtml((l.title + " " + t.title).toLowerCase())}">
+                <div>
+                  <div><strong>${escapeHtml(l.title)}</strong>${taughtIds.has(l.id) ? ` <span class="lesson-taught-tag">✓ taught</span>` : ""}</div>
+                  <div class="meta">${l.checks.length} check questions${also.length ? ` · also used for ${escapeHtml(also.join(", "))}` : ""}</div>
+                </div>
+              </div>`;
+            })
+            .join("");
+          return `<div class="library-topic" data-topic-block><h4>${escapeHtml(t.title)}</h4><div class="test-list">${rows}</div></div>`;
+        })
+        .join("");
+      return `<h3 class="library-subject" style="color:${SUBJECT_COLOR[k]};">${escapeHtml(SUBJECTS[k].name)}</h3>${topics}`;
+    })
+    .join("");
+  main.innerHTML = `
+    <span class="back-link" id="lib-back">&larr; Back</span>
+    <div class="card">
+      <h2 style="margin-top:0;">Lesson library</h2>
+      <div style="color:var(--muted); font-size:0.88rem; margin-top:-8px;">All ${LESSONS.length} lessons she can be taught. Tap one to read it — with the answers to its check questions. Nothing you open here is recorded.</div>
+      <input type="text" id="lib-filter" class="text-answer" style="margin-top:12px;" placeholder="Search lessons (e.g. ratio, cells, circuits)" autocomplete="off" />
+      <div id="lib-list">${groupsHtml}</div>
+      <div class="empty-state" id="lib-empty" hidden>No lessons match that.</div>
+    </div>
+  `;
+  document.getElementById("lib-back").addEventListener("click", backFn);
+  main.querySelectorAll("[data-lesson-id]").forEach((row) => {
+    row.addEventListener("click", () => renderLessonPreview(row.dataset.lessonId, () => renderLessonLibrary(backFn, taughtIds)));
+  });
+  document.getElementById("lib-filter").addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    let any = false;
+    main.querySelectorAll("[data-lesson-id]").forEach((row) => {
+      const show = !q || row.dataset.search.includes(q);
+      row.hidden = !show;
+      if (show) any = true;
+    });
+    main.querySelectorAll("[data-topic-block]").forEach((blk) => {
+      blk.hidden = !blk.querySelector("[data-lesson-id]:not([hidden])");
+    });
+    document.getElementById("lib-empty").hidden = any;
+  });
+}
+
+function renderLessonPreview(lessonId, backFn) {
+  destroyActiveCharts();
+  stopSpeaking();
+  const lesson = LESSONS.find((l) => l.id === lessonId);
+  if (!lesson) {
+    backFn();
+    return;
+  }
+  const subj = SUBJECTS[lesson.subject];
+  const topic = subj.topics.find((t) => t.id === lesson.topicId);
+  const checksHtml = lesson.checks
+    .map((c, i) => {
+      const answerHtml =
+        c.type === "mcq"
+          ? `<ul class="key-options">${c.options.map((o, k) => `<li class="${k === c.correctIndex ? "key-correct" : ""}">${escapeHtml(o)}${k === c.correctIndex ? " ✅" : ""}</li>`).join("")}</ul>`
+          : `<div class="key-short">Accepted answer: <strong>${escapeHtml(correctAnswerDisplay(c))}</strong></div>`;
+      return `
+      <div class="lesson-key-item">
+        <div class="question-number">Check question ${i + 1} of ${lesson.checks.length}</div>
+        <p class="question-prompt">${escapeHtml(c.prompt)}</p>
+        ${answerHtml}
+        <div class="explanation">${escapeHtml(c.explanation)}</div>
+      </div>`;
+    })
+    .join("");
+  main.innerHTML = `
+    <span class="back-link" id="lp-back">&larr; Back to lessons</span>
+    <div class="card lesson-card">
+      <div class="lesson-tag">📘 Lesson preview <span class="lesson-preview-note">assessor view — nothing is recorded</span></div>
+      <h2 class="lesson-title">${escapeHtml(lesson.title)}</h2>
+      <div class="lesson-why">${escapeHtml(subj.name)} · ${escapeHtml(topic ? topic.title : lesson.topicId)}. ${escapeHtml(lesson.why || "")}</div>
+      ${lessonBodyHtml(lesson)}
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;">Check questions and answers</h3>
+      <div style="color:var(--muted); font-size:0.85rem; margin-top:-6px; margin-bottom:10px;">She is asked 2 of these, picked at random, after reading the lesson.</div>
+      ${checksHtml}
+    </div>
+  `;
+  window.scrollTo(0, 0);
+  document.getElementById("lp-back").addEventListener("click", backFn);
 }
 
 async function renderAssessorProfile(profileName) {
@@ -3004,6 +3226,13 @@ async function renderAssessorProfile(profileName) {
   refreshCalendar();
 
   document.getElementById("back-assessor").addEventListener("click", renderAssessorProfiles);
+  const taughtIds = new Set(lessonRecords.map((r) => r.lessonId).filter(Boolean));
+  const backToProfile = () => renderAssessorProfile(profileName);
+  main.querySelectorAll("[data-open-lesson]").forEach((row) => {
+    row.addEventListener("click", () => renderLessonPreview(row.dataset.openLesson, backToProfile));
+  });
+  const libBtn = document.getElementById("assessor-lib-btn2");
+  if (libBtn) libBtn.addEventListener("click", () => renderLessonLibrary(backToProfile, taughtIds));
   main.querySelectorAll("[data-start-paper]").forEach((row) => {
     row.addEventListener("click", () => startExamFromAssessor(profileName, row.dataset.subject, row.dataset.startPaper));
   });
