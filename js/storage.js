@@ -123,7 +123,12 @@ export async function saveResult(record) {
   return withId;
 }
 
-export async function getResults({ profile, subject } = {}) {
+// Lesson records (the daily "teaching" screen — see js/lessons.js) are saved in the same
+// results store as sessions, tagged mode: "lesson", so they sync exactly like everything
+// else. getResults() hides them by default so that nothing which averages, counts or
+// streaks over "sessions" (dials, calendar, day streak, weak topics, hat trick, dashboard)
+// ever sees a lesson as a session; getLessonRecords() is the one way to read them back.
+export async function getResults({ profile, subject, includeLessons = false } = {}) {
   let results;
   if (mode === "cloud") {
     const { collection, getDocs } = firestoreFns;
@@ -132,9 +137,15 @@ export async function getResults({ profile, subject } = {}) {
   } else {
     results = readLocalResults();
   }
+  if (!includeLessons) results = results.filter((r) => r.mode !== "lesson");
   if (profile) results = results.filter((r) => r.profile === profile);
   if (subject) results = results.filter((r) => r.subject === subject);
   return results.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
+export async function getLessonRecords({ profile } = {}) {
+  const all = await getResults({ profile, includeLessons: true });
+  return all.filter((r) => r.mode === "lesson");
 }
 
 export async function getAllProfiles() {

@@ -10,7 +10,8 @@ import {
   timeAllowedMinutes,
   UNCONFIRMED_TIME_ALLOWED_PAPER_KEYS
 } from "./subjects.js";
-import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getAllProfiles, getProfileSettings, setProfileSettings } from "./storage.js";
+import { initStorage, getMode, getCurrentProfile, setCurrentProfile, saveResult, getResults, getLessonRecords, getAllProfiles, getProfileSettings, setProfileSettings } from "./storage.js";
+import { pickLessonForToday, pickChecks, subjectsWithLessons } from "./lessons.js";
 import { isCorrect, correctAnswerDisplay, userAnswerDisplay, optionLabel, classifyAngleDeg } from "./marking.js";
 import { Stopwatch, formatTime } from "./timer.js";
 import { renderDashboardScreen, SUBJECT_COLOR } from "./dashboard.js";
@@ -1216,6 +1217,21 @@ async function renderHome() {
   main.innerHTML = `<div class="empty-state">Loading your progress…</div>`;
   const results = await getResults({ profile: state.profile });
   const streak = computeStreak(results);
+  // Heads-up that a lesson is due before her first session today (the gate itself lives in
+  // startSession()). Never lets a lookup problem break the home screen.
+  let lessonBannerHtml = "";
+  try {
+    const pendingLesson = await getPendingLesson();
+    if (pendingLesson) {
+      lessonBannerHtml = `
+      <div class="card lesson-banner">
+        <strong>📘 A short lesson comes first today</strong>
+        <div style="color:var(--muted); font-size:0.85rem; margin-top:2px;">${escapeHtml(pendingLesson.lesson.title)} (${escapeHtml(SUBJECTS[pendingLesson.weak.subject].name)}). Read it and answer 2 quick check questions, then start your revision as normal.</div>
+      </div>`;
+    }
+  } catch (err) {
+    console.error("Could not check for a lesson", err);
+  }
   // Overall-average dials (built for the assessor view in rev.24) shown on the
   // student's own home screen too. Left out entirely on a brand-new profile
   // (no sessions in any subject) — each subject card already says "no sessions
@@ -1265,6 +1281,7 @@ async function renderHome() {
       ${homeDialsHtml}
       <div class="subject-grid">${subjectCards}</div>
     </div>
+    ${lessonBannerHtml}
     ${examBannerHtml}
     ${buildCalendarHtml(results)}
     <button class="btn secondary" id="dashboard-btn">📈 View progress dashboard</button>
@@ -1354,9 +1371,235 @@ async function renderSubject(subjectKey) {
   }
 }
 
+// ---------- DAILY LESSON (taught before her first session of the day) ----------
+//
+// If she has been getting a Maths or Science topic wrong (the same "3 wrong in a row" rule
+// used everywhere else for weak topics), she is taught ONE short lesson per day before any
+// revision session starts. It is a hard gate: startSession()/startExam() below check
+// getPendingLesson() first. The lesson ends with 2 check questions; her answers are saved
+// (mode: "lesson", hidden from every session statistic — see storage.js) so the assessor view
+// can show what was taught and how the checks went. Which lesson comes up is decided by the
+// pure function pickLessonForToday() in js/lessons.js.
+
+function lessonDoneFlagKey(profile) {
+  return `gcse_revision_lesson_done_${profile}`;
+}
+
+// A same-device backstop, set the moment a lesson is finished even if saving to the shared
+// store fails — otherwise a storage problem could trap her in the lesson gate forever.
+function lessonDoneToday(profile) {
+  try {
+    return localStorage.getItem(lessonDoneFlagKey(profile)) === new Date().toDateString();
+  } catch (err) {
+    return false;
+  }
+}
+
+function markLessonDoneToday(profile) {
+  try {
+    localStorage.setItem(lessonDoneFlagKey(profile), new Date().toDateString());
+  } catch (err) {
+    console.error("Could not save lesson flag", err);
+  }
+}
+
+async function getPendingLesson() {
+  const profile = state.profile;
+  if (!profile || lessonDoneToday(profile)) return null;
+  const [results, lessonRecords] = await Promise.all([getResults({ profile }), getLessonRecords({ profile })]);
+  const weak = [];
+  subjectsWithLessons().forEach((subjectKey) => {
+    const flat = flattenAnswers(results.filter((r) => r.subject === subjectKey));
+    computeWeakTopics(flat)
+      .filter((w) => w.streak >= WEAK_STREAK_THRESHOLD)
+      .forEach((w) => {
+        // The questions in the current wrong streak — used to pick the lesson that matches them.
+        const prompts = flat
+          .filter((a) => a.topicId === w.topicId)
+          .slice(-w.streak)
+          .map((a) => String(a.prompt || ""));
+        weak.push({ subject: subjectKey, ...w, prompts });
+      });
+  });
+  return pickLessonForToday({ weak, lessonRecords });
+}
+
+function renderLesson(pending, onDone) {
+  destroyActiveCharts();
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  const { lesson, weak } = pending;
+  const checks = pickChecks(lesson, 2);
+  const startedAt = Date.now();
+  const given = [];
+
+  const sectionsHtml = lesson.sections
+    .map(
+      (sec) => `
+      <div class="lesson-section">
+        <h3>${escapeHtml(sec.h)}</h3>
+        ${(sec.p || []).map((t) => `<p>${escapeHtml(t)}</p>`).join("")}
+        ${sec.list && sec.list.length ? `<ul>${sec.list.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : ""}
+      </div>`
+    )
+    .join("");
+
+  main.innerHTML = `
+    <div class="card lesson-card">
+      <div class="lesson-tag">📘 Today's lesson</div>
+      <h2 class="lesson-title">${escapeHtml(lesson.title)}</h2>
+      <div class="lesson-why">${escapeHtml(SUBJECTS[weak.subject].name)} · ${escapeHtml(weak.topicTitle)} has been wrong ${weak.streak} times in a row, so let's go over it before you start. ${escapeHtml(lesson.why)}</div>
+      ${sectionsHtml}
+      <div class="lesson-worked">
+        <div class="lesson-worked-title">✏️ Worked example</div>
+        <div class="lesson-worked-problem">${escapeHtml(lesson.worked.title)}</div>
+        <ol>${lesson.worked.steps.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ol>
+        <div class="lesson-worked-answer">Answer: ${escapeHtml(lesson.worked.answer)}</div>
+      </div>
+      <div class="lesson-watch">
+        <div class="lesson-watch-title">⚠️ Watch out for</div>
+        <ul>${lesson.watch.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>
+      </div>
+      <button class="btn block" id="lesson-checks-btn" type="button">I've read it — show me the ${checks.length} check questions</button>
+    </div>
+    <div id="lesson-checks-area"></div>
+  `;
+  window.scrollTo(0, 0);
+
+  const area = document.getElementById("lesson-checks-area");
+
+  function renderCheck(i) {
+    const c = checks[i];
+    const isLastCheck = i === checks.length - 1;
+    const answerHtml =
+      c.type === "mcq"
+        ? `<div class="option-list">${c.options.map((o, k) => `<button class="option-btn" type="button" data-index="${k}">${escapeHtml(o)}</button>`).join("")}</div>`
+        : `<input type="text" class="text-answer" id="lesson-short" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type your answer" />`;
+    area.innerHTML = `
+      <div class="card lesson-check">
+        <div class="question-number">Check question ${i + 1} of ${checks.length}</div>
+        <p class="question-prompt">${escapeHtml(c.prompt)}</p>
+        ${answerHtml}
+        <div class="lesson-feedback" id="lesson-feedback" hidden></div>
+        <div class="nav-row"><button class="btn" id="lesson-check-btn" type="button">Check my answer</button></div>
+      </div>
+    `;
+    let answer;
+    let checked = false;
+    if (c.type === "mcq") {
+      area.querySelectorAll(".option-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (checked) return;
+          answer = Number(btn.dataset.index);
+          area.querySelectorAll(".option-btn").forEach((b) => b.classList.remove("selected"));
+          btn.classList.add("selected");
+        });
+      });
+    } else {
+      const input = document.getElementById("lesson-short");
+      input.addEventListener("input", () => {
+        answer = input.value;
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") document.getElementById("lesson-check-btn").click();
+      });
+      input.focus();
+    }
+    const btn = document.getElementById("lesson-check-btn");
+    btn.addEventListener("click", async () => {
+      if (checked) {
+        if (!isLastCheck) {
+          renderCheck(i + 1);
+        } else {
+          await finishLesson();
+        }
+        return;
+      }
+      if (answer === undefined || answer === "") return; // nothing chosen yet
+      checked = true;
+      const ok = isCorrect(c, answer);
+      given.push({ check: c, userAnswer: answer, correct: ok });
+      const fb = document.getElementById("lesson-feedback");
+      fb.hidden = false;
+      fb.className = `lesson-feedback ${ok ? "good" : "bad"}`;
+      fb.innerHTML = `<strong>${ok ? "✅ Correct!" : "❌ Not quite."}</strong> The answer is <strong>${escapeHtml(correctAnswerDisplay(c))}</strong>. ${escapeHtml(c.explanation)}`;
+      if (c.type === "short") document.getElementById("lesson-short").readOnly = true;
+      btn.textContent = isLastCheck ? "Finish lesson" : "Next check question";
+    });
+  }
+
+  async function finishLesson() {
+    const correctCount = given.filter((g) => g.correct).length;
+    const record = {
+      profile: state.profile,
+      subject: lesson.subject,
+      mode: "lesson",
+      // The topic she was weak in (not always the lesson's own topic — a lesson can serve
+      // several), so the "taught longest ago" rotation works per weak topic.
+      topicId: weak.topicId,
+      lessonId: lesson.id,
+      lessonTitle: lesson.title,
+      weakStreak: weak.streak,
+      paperKey: null,
+      timeAllowedMinutes: null,
+      timedOut: false,
+      sessionTitle: `Lesson: ${lesson.title}`,
+      score: correctCount,
+      total: given.length,
+      percentage: Math.round((correctCount / given.length) * 100),
+      durationSeconds: Math.round((Date.now() - startedAt) / 1000),
+      timestamp: new Date().toISOString(),
+      answers: given.map((g) => ({
+        questionId: g.check.id,
+        topicId: weak.topicId,
+        topicTitle: weak.topicTitle,
+        prompt: g.check.prompt,
+        correct: g.correct,
+        userAnswer: userAnswerDisplay(g.check, g.userAnswer),
+        correctAnswer: correctAnswerDisplay(g.check),
+        explanation: g.check.explanation,
+        source: null,
+        grade: null,
+        chart: null,
+        image: null,
+        numberline: null,
+        userAnswerRaw: null,
+        usedHint: false,
+        usedAudio: false,
+      })),
+    };
+    markLessonDoneToday(state.profile);
+    try {
+      await saveResult(record);
+    } catch (err) {
+      console.error("Could not save lesson record", err);
+    }
+    main.innerHTML = `
+      <div class="card lesson-card" style="text-align:center;">
+        <div style="font-size:2.4rem;">📘</div>
+        <h2 class="lesson-title">Lesson done</h2>
+        <p>You got ${correctCount} of ${given.length} check questions right. Now on to your revision.</p>
+        <button class="btn block" id="lesson-continue-btn" type="button">Start my revision</button>
+      </div>
+    `;
+    document.getElementById("lesson-continue-btn").addEventListener("click", () => onDone());
+  }
+
+  document.getElementById("lesson-checks-btn").addEventListener("click", () => {
+    document.getElementById("lesson-checks-btn").hidden = true;
+    renderCheck(0);
+    area.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
 // ---------- SESSION RUNNER ----------
 
 async function startSession(subjectKey, { mode, topicId }) {
+  // Hard gate: today's lesson (if one is due) comes before any session.
+  const pendingLesson = await getPendingLesson();
+  if (pendingLesson) {
+    renderLesson(pendingLesson, () => startSession(subjectKey, { mode, topicId }));
+    return;
+  }
   const priorResults = await getResults({ profile: state.profile, subject: subjectKey });
   // Topic practice is gated behind finishing today's mixed 5 first — enforce
   // it here too, not just in the UI, in case this is reached some other way
@@ -1374,6 +1617,11 @@ async function startSession(subjectKey, { mode, topicId }) {
 // instead of the normal count-up clock. No daily-done gate here — exam mode
 // is independent of daily/topic practice.
 async function startExam(subjectKey) {
+  const pendingLesson = await getPendingLesson();
+  if (pendingLesson) {
+    renderLesson(pendingLesson, () => startExam(subjectKey));
+    return;
+  }
   const priorResults = await getResults({ profile: state.profile, subject: subjectKey });
   const paper = pickExamPaper(subjectKey, priorResults);
   if (!paper) {
@@ -2501,11 +2749,36 @@ function showAssessorCalendarDayModal(dateStr, daySubjects) {
   });
 }
 
+// The "Lessons taught" card: which daily lessons she has been given and how her 2 check
+// questions went. Lessons are separate from sessions and never count in any average.
+function buildAssessorLessonsHtml(lessonRecords) {
+  const rows = lessonRecords
+    .slice(0, 12)
+    .map((r) => {
+      const subj = SUBJECTS[r.subject];
+      const when = new Date(r.timestamp).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+      return `
+        <div style="margin-bottom:8px;">
+          <div style="font-weight:700;">${escapeHtml(r.lessonTitle || r.sessionTitle || "Lesson")}</div>
+          <div style="font-size:0.85rem; color:var(--muted);"><span style="color:${subj ? SUBJECT_COLOR[subj.key] : "inherit"}; font-weight:700;">${escapeHtml(subj ? subj.name : r.subject)}</span> · ${escapeHtml(when)} · checks ${r.score}/${r.total}${r.weakStreak ? ` · topic had been wrong ${r.weakStreak} in a row` : ""}</div>
+        </div>`;
+    })
+    .join("");
+  return `
+    <div class="card">
+      <h3 style="margin-top:0;">Lessons taught</h3>
+      <div style="color:var(--muted); font-size:0.85rem; margin-top:-6px; margin-bottom:10px;">When a Maths or Science topic has been wrong 3 times in a row, one short lesson is taught before her first session of the day (a different weak topic each day). These are kept separate from her sessions and don't change any average.</div>
+      ${rows || `<div class="empty-state">No lessons taught yet.</div>`}
+    </div>
+  `;
+}
+
 async function renderAssessorProfile(profileName) {
   destroyActiveCharts();
   const initializedSessions = new Set();
   main.innerHTML = `<div class="empty-state">Loading…</div>`;
   const results = (await getResults({ profile: profileName })).slice().reverse(); // newest first
+  const lessonRecords = (await getLessonRecords({ profile: profileName })).slice().reverse(); // newest first
 
   // Built once from the results already fetched above — every month the
   // parent navigates to in the calendar re-renders from this same object,
@@ -2692,6 +2965,7 @@ async function renderAssessorProfile(profileName) {
     ${dialsSectionHtml}
     ${calendarSectionHtml}
     ${weakSummaryHtml}
+    ${buildAssessorLessonsHtml(lessonRecords)}
     ${helpSummaryHtml}
     ${examPapersHtml}
     ${sessionRows || `<div class="empty-state">No sessions yet.</div>`}
